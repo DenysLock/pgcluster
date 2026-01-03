@@ -1,0 +1,87 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: pgcluster-api
+
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/pgcluster}
+    username: ${DATABASE_USER:postgres}
+    password: ${DATABASE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+# JWT Configuration
+jwt:
+  secret: ${JWT_SECRET:default-dev-secret-change-in-production}
+  expiration: 86400000  # 24 hours in milliseconds
+
+# Hetzner Cloud Configuration
+hetzner:
+  api-token: ${HETZNER_API_TOKEN:}
+  location: ${HETZNER_LOCATION:fsn1}
+  server-type: ${HETZNER_SERVER_TYPE:cx23}
+  ssh-key-ids: ${HETZNER_SSH_KEY_IDS:}
+  snapshot-id: ${CUSTOMER_SNAPSHOT_ID}
+
+# Cloudflare Configuration
+cloudflare:
+  api-token: ${CLOUDFLARE_API_TOKEN:}
+  zone-id: ${CLOUDFLARE_ZONE_ID:}
+
+# Cluster Configuration
+cluster:
+  base-domain: ${CLUSTER_BASE_DOMAIN:db.pgcluster.com}
+
+# SSH Configuration (for provisioning customer clusters)
+ssh:
+  user: ${SSH_USER:root}
+  private-key-path: ${SSH_PRIVATE_KEY_PATH:/home/appuser/.ssh/id_rsa}
+
+# Prometheus Configuration
+prometheus:
+  url: ${PROMETHEUS_URL:http://localhost:9090}
+
+# Actuator
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+# API Documentation
+springdoc:
+  api-docs:
+    path: /api-docs
+    enabled: ${SWAGGER_ENABLED:false}
+  swagger-ui:
+    path: /swagger-ui.html
+    enabled: ${SWAGGER_ENABLED:false}
+
+# Logging
+logging:
+  level:
+    root: INFO
+    com.pgcluster: DEBUG
+    org.springframework.security: INFO

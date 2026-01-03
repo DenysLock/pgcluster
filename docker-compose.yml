@@ -1,0 +1,57 @@
+# Local development docker-compose
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: pgcluster-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: pgcluster
+      POSTGRES_USER: pgcluster
+      POSTGRES_PASSWORD: pgcluster_dev_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pgcluster"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pgcluster-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      DATABASE_URL: jdbc:postgresql://postgres:5432/pgcluster
+      DATABASE_USER: pgcluster
+      DATABASE_PASSWORD: pgcluster_dev_password
+      JWT_SECRET: dev-jwt-secret-change-in-production
+      SWAGGER_ENABLED: "true"
+      # Hetzner/Cloudflare - required for cluster provisioning (optional for local API testing)
+      HETZNER_API_TOKEN: ${HETZNER_API_TOKEN:-}
+      HETZNER_SSH_KEY_IDS: ${HETZNER_SSH_KEY_IDS:-}
+      CUSTOMER_SNAPSHOT_ID: ${CUSTOMER_SNAPSHOT_ID:-local-dev-no-provisioning}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
+      CLUSTER_BASE_DOMAIN: ${CLUSTER_BASE_DOMAIN:-db.example.com}
+      SSH_USER: root
+      PROMETHEUS_URL: http://localhost:9090
+    # For cluster provisioning, mount the SSH key registered with Hetzner
+    volumes:
+      - ~/.ssh/dbaas_provisioning:/home/appuser/.ssh/id_rsa:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
