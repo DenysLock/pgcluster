@@ -71,9 +71,12 @@ public class ClusterService {
 
         log.info("Credentials accessed for cluster {} by user {}", cluster.getSlug(), user.getEmail());
 
+        int pooledPort = 6432;
+
         return ClusterCredentialsResponse.builder()
                 .hostname(cluster.getHostname())
                 .port(cluster.getPort())
+                .pooledPort(pooledPort)
                 .database("postgres")
                 .username("postgres")
                 .password(cluster.getPostgresPassword())
@@ -81,6 +84,10 @@ public class ClusterService {
                         cluster.getPostgresPassword(),
                         cluster.getHostname(),
                         cluster.getPort()))
+                .pooledConnectionString(String.format("postgresql://postgres:%s@%s:%d/postgres",
+                        cluster.getPostgresPassword(),
+                        cluster.getHostname(),
+                        pooledPort))
                 .sslMode("prefer")
                 .retrievedAt(java.time.Instant.now())
                 .warning("Store these credentials securely. Do not share or commit to version control.")

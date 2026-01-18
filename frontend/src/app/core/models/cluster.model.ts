@@ -12,10 +12,12 @@ export interface ConnectionInfo {
 export interface ClusterCredentials {
   hostname: string;
   port: number;
+  pooledPort: number;
   database: string;
   username: string;
   password: string;
   connectionString: string;
+  pooledConnectionString: string;
   sslMode: string;
   warning: string;
   retrievedAt: string;

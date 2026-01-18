@@ -17,10 +17,12 @@ public class ClusterCredentialsResponse {
 
     private String hostname;
     private int port;
+    private int pooledPort;
     private String database;
     private String username;
     private String password;
     private String connectionString;
+    private String pooledConnectionString;
     private String sslMode;
     private Instant retrievedAt;
     private String warning;

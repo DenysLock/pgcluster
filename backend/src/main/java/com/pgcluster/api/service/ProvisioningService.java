@@ -13,6 +13,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -273,6 +275,28 @@ public class ProvisioningService {
                 "mkdir -p /data/postgresql /data/etcd && chmod 700 /data/postgresql && chown -R 999:999 /data/postgresql"
         );
 
+        // Generate and upload PgBouncer config
+        String pgbouncerConfig = generatePgBouncerConfig(cluster.getNodeSize());
+        sshService.uploadContent(
+                node.getPublicIp(),
+                pgbouncerConfig,
+                "/opt/pgcluster/pgbouncer.ini"
+        );
+
+        // Generate and upload PgBouncer userlist
+        String pgbouncerUserlist = generatePgBouncerUserlist(cluster.getPostgresPassword());
+        sshService.uploadContent(
+                node.getPublicIp(),
+                pgbouncerUserlist,
+                "/opt/pgcluster/userlist.txt"
+        );
+
+        // Set restrictive permissions on userlist.txt (contains password hash)
+        sshService.executeCommand(
+                node.getPublicIp(),
+                "chmod 600 /opt/pgcluster/userlist.txt"
+        );
+
         log.info("Node {} config uploaded with secure permissions", node.getName());
     }
 
@@ -439,6 +463,23 @@ public class ProvisioningService {
                   - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD}@127.0.0.1:5432/postgres?sslmode=disable
                 command:
                   - '--web.listen-address=:9187'
+
+              pgbouncer:
+                image: edoburu/pgbouncer:v1.23.1-p3
+                container_name: pgbouncer
+                restart: unless-stopped
+                network_mode: host
+                depends_on:
+                  patroni:
+                    condition: service_healthy
+                volumes:
+                  - /opt/pgcluster/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+                  - /opt/pgcluster/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+                healthcheck:
+                  test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "6432"]
+                  interval: 10s
+                  timeout: 5s
+                  retries: 3
             """.formatted(
                 nodeName,           // ETCD_NAME
                 nodeIp,             // ETCD_LISTEN_PEER_URLS
@@ -564,6 +605,71 @@ public class ProvisioningService {
     }
 
     private record MemorySettings(String sharedBuffers, String effectiveCache) {}
+
+    private record PgBouncerSettings(int defaultPoolSize, int maxClientConn, int reservePoolSize) {}
+
+    private PgBouncerSettings getPgBouncerSettings(String nodeSize) {
+        return switch (nodeSize) {
+            case "cx23" -> new PgBouncerSettings(20, 400, 5);    // 4GB RAM
+            case "cx33" -> new PgBouncerSettings(40, 600, 10);   // 8GB RAM
+            case "cx43" -> new PgBouncerSettings(80, 1000, 20);  // 16GB RAM
+            case "cx53" -> new PgBouncerSettings(150, 2000, 40); // 32GB RAM
+            default -> new PgBouncerSettings(15, 300, 3);
+        };
+    }
+
+    /**
+     * Generate PgBouncer configuration file
+     */
+    private String generatePgBouncerConfig(String nodeSize) {
+        PgBouncerSettings pool = getPgBouncerSettings(nodeSize);
+        return """
+            [databases]
+            * = host=127.0.0.1 port=5432
+
+            [pgbouncer]
+            listen_addr = 0.0.0.0
+            listen_port = 6432
+            auth_type = md5
+            auth_file = /etc/pgbouncer/userlist.txt
+            admin_users = postgres
+            pool_mode = transaction
+            default_pool_size = %d
+            max_client_conn = %d
+            reserve_pool_size = %d
+            reserve_pool_timeout = 5
+            server_reset_query = DISCARD ALL
+            ignore_startup_parameters = extra_float_digits
+            """.formatted(pool.defaultPoolSize, pool.maxClientConn, pool.reservePoolSize);
+    }
+
+    /**
+     * Generate PgBouncer userlist.txt file with MD5 password hash
+     */
+    private String generatePgBouncerUserlist(String postgresPassword) {
+        // MD5 format: "md5" + md5(password + username)
+        String md5Hash = md5Hex(postgresPassword + "postgres");
+        return "\"postgres\" \"md5%s\"\n".formatted(md5Hash);
+    }
+
+    /**
+     * Compute MD5 hash of a string and return hex representation
+     */
+    private String md5Hex(String input) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] digest = md.digest(input.getBytes());
+            StringBuilder hexString = new StringBuilder();
+            for (byte b : digest) {
+                String hex = Integer.toHexString(0xff & b);
+                if (hex.length() == 1) hexString.append('0');
+                hexString.append(hex);
+            }
+            return hexString.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("MD5 algorithm not available", e);
+        }
+    }
 
     /**
      * Wait for Patroni cluster to elect a leader

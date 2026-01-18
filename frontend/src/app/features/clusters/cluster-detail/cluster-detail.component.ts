@@ -173,16 +173,8 @@ interface ProvisioningStep {
                   <p class="font-mono text-sm">{{ cluster()?.connection?.hostname }}</p>
                 </div>
                 <div class="rounded-lg bg-muted/50 p-4">
-                  <p class="text-sm text-muted-foreground mb-1">Port</p>
-                  <p class="font-mono text-sm">{{ cluster()?.connection?.port }}</p>
-                </div>
-                <div class="rounded-lg bg-muted/50 p-4">
-                  <p class="text-sm text-muted-foreground mb-1">Username</p>
-                  <p class="font-mono text-sm">{{ cluster()?.connection?.username }}</p>
-                </div>
-                <div class="rounded-lg bg-muted/50 p-4">
-                  <p class="text-sm text-muted-foreground mb-1">Database</p>
-                  <p class="font-mono text-sm">postgres</p>
+                  <p class="text-sm text-muted-foreground mb-1">Ports</p>
+                  <p class="font-mono text-sm">6432 <span class="text-muted-foreground">(pooled)</span> / 5432 <span class="text-muted-foreground">(direct)</span></p>
                 </div>
               </div>
 
@@ -205,7 +197,7 @@ interface ProvisioningStep {
                       Show Credentials
                     }
                   </button>
-                  <p class="text-xs text-muted-foreground mt-2">Click to reveal password and connection string. Access is logged.</p>
+                  <p class="text-xs text-muted-foreground mt-2">Click to reveal password and connection strings. Access is logged.</p>
                 </div>
               } @else {
                 <div class="border-t pt-4 space-y-4">
@@ -219,40 +211,48 @@ interface ProvisioningStep {
                     </div>
                   </div>
 
-                  <!-- Connection String -->
-                  <app-connection-string
-                    label="Connection String"
-                    [value]="credentials()?.connectionString || ''"
-                    description="Full connection string for your PostgreSQL client."
-                  />
-
-                  <!-- Password -->
-                  <div class="rounded-lg bg-muted/50 p-4">
-                    <p class="text-sm text-muted-foreground mb-1">Password</p>
+                  <!-- Pooled Connection (Recommended) -->
+                  <div class="space-y-2">
                     <div class="flex items-center gap-2">
-                      <p class="font-mono text-sm">
-                        @if (showPassword()) {
-                          {{ credentials()?.password }}
-                        } @else {
-                          ••••••••••••
-                        }
-                      </p>
-                      <button
-                        (click)="showPassword.set(!showPassword())"
-                        class="p-1 hover:bg-muted rounded"
-                        [title]="showPassword() ? 'Hide password' : 'Show password'"
-                      >
-                        @if (showPassword()) {
-                          <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
-                          </svg>
-                        } @else {
-                          <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                          </svg>
-                        }
-                      </button>
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                        Pooled (Recommended)
+                      </span>
+                      <span class="text-sm text-muted-foreground">Port 6432</span>
+                    </div>
+                    <app-connection-string
+                      label="Pooled Connection String"
+                      [value]="credentials()?.pooledConnectionString || ''"
+                      description="Connection pooled via PgBouncer. Recommended for web applications."
+                    />
+                  </div>
+
+                  <!-- Direct Connection -->
+                  <div class="space-y-2">
+                    <div class="flex items-center gap-2">
+                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                        Direct
+                      </span>
+                      <span class="text-sm text-muted-foreground">Port 5432</span>
+                    </div>
+                    <app-connection-string
+                      label="Direct Connection String"
+                      [value]="credentials()?.connectionString || ''"
+                      description="Direct PostgreSQL connection. Use for admin tasks and migrations."
+                    />
+                  </div>
+
+                  <!-- Usage Guide -->
+                  <div class="rounded-lg bg-muted/30 border p-4">
+                    <p class="text-sm font-medium mb-2">When to use each connection</p>
+                    <div class="grid gap-2 text-sm text-muted-foreground">
+                      <div class="flex items-start gap-2">
+                        <span class="text-emerald-600 dark:text-emerald-400 font-mono shrink-0">6432</span>
+                        <span>Web apps, APIs, serverless functions, high concurrency workloads</span>
+                      </div>
+                      <div class="flex items-start gap-2">
+                        <span class="text-blue-600 dark:text-blue-400 font-mono shrink-0">5432</span>
+                        <span>Migrations, LISTEN/NOTIFY, prepared statements, admin tools (pgAdmin, psql)</span>
+                      </div>
                     </div>
                   </div>
 
@@ -318,7 +318,6 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
   // Credentials state
   credentials = signal<ClusterCredentials | null>(null);
   credentialsLoading = signal(false);
-  showPassword = signal(false);
 
   private clusterId: string = '';
   private pollingSubscription?: Subscription;
@@ -482,6 +481,5 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
 
   hideCredentials(): void {
     this.credentials.set(null);
-    this.showPassword.set(false);
   }
 }
