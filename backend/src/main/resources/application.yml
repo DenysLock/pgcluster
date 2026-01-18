@@ -11,6 +11,14 @@ spring:
     username: ${DATABASE_USER:postgres}
     password: ${DATABASE_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      connection-timeout: 30000
+      leak-detection-threshold: 60000
+      pool-name: pgcluster-pool
 
   jpa:
     hibernate:
@@ -31,8 +39,13 @@ spring:
 
 # JWT Configuration
 jwt:
-  secret: ${JWT_SECRET:default-dev-secret-change-in-production}
+  secret: ${JWT_SECRET}
   expiration: 86400000  # 24 hours in milliseconds
+
+# Security Configuration
+security:
+  field-encryption-key: ${FIELD_ENCRYPTION_KEY}
+  internal-api-key: ${INTERNAL_API_KEY}
 
 # Hetzner Cloud Configuration
 hetzner:
@@ -49,7 +62,7 @@ cloudflare:
 
 # Cluster Configuration
 cluster:
-  base-domain: ${CLUSTER_BASE_DOMAIN:db.pgcluster.com}
+  base-domain: ${CLUSTER_BASE_DOMAIN}
 
 # SSH Configuration (for provisioning customer clusters)
 ssh:
@@ -85,3 +98,38 @@ logging:
     root: INFO
     com.pgcluster: DEBUG
     org.springframework.security: INFO
+
+# Resilience4j Configuration
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 30s
+        failureRateThreshold: 50
+        eventConsumerBufferSize: 10
+    instances:
+      hetzner:
+        baseConfig: default
+      cloudflare:
+        baseConfig: default
+  retry:
+    configs:
+      default:
+        maxAttempts: 3
+        waitDuration: 2s
+        enableExponentialBackoff: true
+        exponentialBackoffMultiplier: 2
+        retryExceptions:
+          - java.io.IOException
+          - java.net.SocketTimeoutException
+          - org.springframework.web.client.ResourceAccessException
+    instances:
+      hetzner:
+        baseConfig: default
+      cloudflare:
+        baseConfig: default

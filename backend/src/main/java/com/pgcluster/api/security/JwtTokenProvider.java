@@ -26,18 +26,28 @@ public class JwtTokenProvider {
 
     @PostConstruct
     public void init() {
-        // Ensure key is at least 256 bits for HS256
-        byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
-        if (keyBytes.length < 32) {
-            // Pad the key if it's too short
-            byte[] paddedKey = new byte[32];
-            System.arraycopy(keyBytes, 0, paddedKey, 0, Math.min(keyBytes.length, 32));
-            keyBytes = paddedKey;
+        // Validate JWT secret is properly configured
+        if (jwtSecret == null || jwtSecret.isBlank()) {
+            throw new IllegalStateException(
+                "JWT_SECRET environment variable must be set. " +
+                "Generate a secure random string of at least 32 characters."
+            );
         }
+
+        if (jwtSecret.length() < 32) {
+            throw new IllegalStateException(
+                "JWT_SECRET must be at least 32 characters for security. " +
+                "Current length: " + jwtSecret.length()
+            );
+        }
+
+        // Initialize the signing key
+        byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
         this.key = Keys.hmacShaKeyFor(keyBytes);
+        log.info("JWT token provider initialized successfully");
     }
 
-    public String generateToken(UUID userId, String email, String role) {
+    public String generateToken(UUID userId, String email, String role, boolean active) {
         Date now = new Date();
         Date expiryDate = new Date(now.getTime() + jwtExpiration);
 
@@ -45,10 +55,29 @@ public class JwtTokenProvider {
                 .subject(userId.toString())
                 .claim("email", email)
                 .claim("role", role)
+                .claim("active", active)
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(key)
                 .compact();
+    }
+
+    public Claims getAllClaims(String token) {
+        return Jwts.parser()
+                .verifyWith(key)
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+    }
+
+    public String getRoleFromToken(String token) {
+        Claims claims = getAllClaims(token);
+        return claims.get("role", String.class);
+    }
+
+    public Boolean getActiveFromToken(String token) {
+        Claims claims = getAllClaims(token);
+        return claims.get("active", Boolean.class);
     }
 
     public UUID getUserIdFromToken(String token) {
@@ -78,6 +107,8 @@ public class JwtTokenProvider {
                     .build()
                     .parseSignedClaims(token);
             return true;
+        } catch (io.jsonwebtoken.security.SecurityException ex) {
+            log.error("Invalid JWT signature");
         } catch (MalformedJwtException ex) {
             log.error("Invalid JWT token");
         } catch (ExpiredJwtException ex) {

@@ -1,5 +1,6 @@
 package com.pgcluster.api.model.entity;
 
+import com.pgcluster.api.security.EncryptedStringConverter;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -64,7 +65,8 @@ public class Cluster {
     @Builder.Default
     private int port = 5432;
 
-    @Column(name = "postgres_password")
+    @Column(name = "postgres_password", length = 512)
+    @Convert(converter = EncryptedStringConverter.class)
     private String postgresPassword;
 
     // Resource tracking

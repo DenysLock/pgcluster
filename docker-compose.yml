@@ -33,8 +33,11 @@ services:
       DATABASE_URL: jdbc:postgresql://postgres:5432/pgcluster
       DATABASE_USER: pgcluster
       DATABASE_PASSWORD: pgcluster_dev_password
-      JWT_SECRET: dev-jwt-secret-change-in-production
       SWAGGER_ENABLED: "true"
+      # Security - dev defaults for local testing only
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-must-be-at-least-32-characters-long}
+      FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:-ZGV2LWZpZWxkLWVuY3J5cHRpb24ta2V5LTMyYnl0ZXM=}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-dev-internal-api-key-for-local-testing}
       # Hetzner/Cloudflare - required for cluster provisioning (optional for local API testing)
       HETZNER_API_TOKEN: ${HETZNER_API_TOKEN:-}
       HETZNER_SSH_KEY_IDS: ${HETZNER_SSH_KEY_IDS:-}

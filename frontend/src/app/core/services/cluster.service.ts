@@ -4,6 +4,7 @@ import { Observable, map, tap } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import {
   Cluster,
+  ClusterCredentials,
   ClusterHealth,
   CreateClusterRequest,
   ClusterListResponse,
@@ -55,6 +56,14 @@ export class ClusterService {
 
   getClusterHealth(id: string): Observable<ClusterHealth> {
     return this.http.get<ClusterHealth>(`${environment.apiUrl}/api/v1/clusters/${id}/health`);
+  }
+
+  /**
+   * Fetch cluster credentials (password, connection string).
+   * This is a separate endpoint for security - access is logged on the server.
+   */
+  getClusterCredentials(id: string): Observable<ClusterCredentials> {
+    return this.http.get<ClusterCredentials>(`${environment.apiUrl}/api/v1/clusters/${id}/credentials`);
   }
 
   refreshClusters(): void {

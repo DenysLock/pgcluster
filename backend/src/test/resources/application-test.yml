@@ -1,0 +1,80 @@
+server:
+  port: 0  # Random port for tests
+
+spring:
+  application:
+    name: pgcluster-api-test
+
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+        format_sql: true
+
+  flyway:
+    enabled: false
+
+# Test JWT Configuration
+jwt:
+  secret: test-jwt-secret-that-is-at-least-32-characters-long-for-testing
+  expiration: 86400000
+
+# Test Security Configuration
+security:
+  field-encryption-key: dGVzdC1lbmNyeXB0aW9uLWtleS0zMmJ5dGVzISEhISE=  # base64 of "test-encryption-key-32bytes!!!!!" (exactly 32 bytes)
+  internal-api-key: test-internal-api-key-for-testing-purposes
+
+# Test Hetzner Configuration (disabled)
+hetzner:
+  api-token: test-token
+  location: fsn1
+  server-type: cx23
+  ssh-key-ids: 12345
+  snapshot-id: ubuntu-24.04
+
+# Test Cloudflare Configuration (disabled)
+cloudflare:
+  api-token: test-token
+  zone-id: test-zone-id
+
+# Test Cluster Configuration
+cluster:
+  base-domain: test.pgcluster.local
+
+# Test SSH Configuration
+ssh:
+  user: root
+  private-key-path: /tmp/test-ssh-key
+
+# Prometheus (disabled for tests)
+prometheus:
+  url: http://localhost:9090
+
+# Disable actuator for tests
+management:
+  endpoints:
+    web:
+      exposure:
+        include: none
+
+# Test logging
+logging:
+  level:
+    root: WARN
+    com.pgcluster: DEBUG
+
+# Disable resilience4j for tests
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        registerHealthIndicator: false

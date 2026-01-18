@@ -2,12 +2,14 @@ import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { AdminService } from '../../../core/services/admin.service';
-import { AdminClusterDetail } from '../../../core/models';
+import { ClusterService } from '../../../core/services/cluster.service';
+import { AdminClusterDetail, ClusterCredentials } from '../../../core/models';
+import { SpinnerComponent, ConnectionStringComponent } from '../../../shared/components';
 
 @Component({
   selector: 'app-admin-cluster-detail',
   standalone: true,
-  imports: [CommonModule, RouterModule],
+  imports: [CommonModule, RouterModule, SpinnerComponent, ConnectionStringComponent],
   template: `
     <div class="p-6">
       <!-- Back button -->
@@ -83,26 +85,106 @@ import { AdminClusterDetail } from '../../../core/models';
             </div>
           </div>
 
-          <!-- Connection String -->
+          <!-- Connection Details -->
           <div class="bg-card rounded-lg border border-border p-6 lg:col-span-2">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-lg font-semibold text-foreground">Connection String</h2>
-              @if (cluster()!.connection?.password && cluster()!.connection?.hostname) {
-                <button (click)="togglePassword()" class="text-xs text-muted-foreground hover:text-foreground transition-colors">
-                  {{ showPassword() ? 'Hide password' : 'Show password' }}
-                </button>
-              }
-            </div>
-            @if (cluster()!.connection?.connection_string) {
-              <div class="bg-muted rounded-md px-3 py-2 font-mono text-sm overflow-x-auto whitespace-nowrap">
-                @if (showPassword()) {
-                  {{ cluster()!.connection!.connection_string }}
+            <h2 class="text-lg font-semibold text-foreground mb-4">Connection Details</h2>
+            @if (cluster()!.connection) {
+              <div class="space-y-4">
+                <!-- Basic connection info -->
+                <div class="grid gap-4 md:grid-cols-2">
+                  <div class="bg-muted/50 rounded-md p-3">
+                    <span class="text-xs text-muted-foreground">Host</span>
+                    <p class="font-mono text-sm">{{ cluster()!.connection!.hostname }}</p>
+                  </div>
+                  <div class="bg-muted/50 rounded-md p-3">
+                    <span class="text-xs text-muted-foreground">Port</span>
+                    <p class="font-mono text-sm">{{ cluster()!.connection!.port }}</p>
+                  </div>
+                  <div class="bg-muted/50 rounded-md p-3">
+                    <span class="text-xs text-muted-foreground">Username</span>
+                    <p class="font-mono text-sm">{{ cluster()!.connection!.username }}</p>
+                  </div>
+                  <div class="bg-muted/50 rounded-md p-3">
+                    <span class="text-xs text-muted-foreground">Database</span>
+                    <p class="font-mono text-sm">postgres</p>
+                  </div>
+                </div>
+
+                <!-- Credentials section -->
+                @if (!credentials()) {
+                  <div class="border-t pt-4">
+                    <button
+                      (click)="loadCredentials()"
+                      [disabled]="credentialsLoading()"
+                      class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+                    >
+                      @if (credentialsLoading()) {
+                        <app-spinner size="sm" class="mr-2" />
+                        Loading...
+                      } @else {
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                        Show Credentials
+                      }
+                    </button>
+                    <p class="text-xs text-muted-foreground mt-2">Access is logged for security.</p>
+                  </div>
                 } @else {
-                  postgresql://postgres:<span class="password-mask"></span>&#64;{{ cluster()!.connection!.hostname }}:{{ cluster()!.connection!.port }}/postgres
+                  <div class="border-t pt-4 space-y-4">
+                    <!-- Warning -->
+                    <div class="rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
+                      <p class="text-sm text-amber-800 dark:text-amber-200">{{ credentials()!.warning }}</p>
+                    </div>
+
+                    <!-- Connection String -->
+                    <app-connection-string
+                      label="Connection String"
+                      [value]="credentials()!.connectionString"
+                    />
+
+                    <!-- Password -->
+                    <div class="bg-muted/50 rounded-md p-3">
+                      <span class="text-xs text-muted-foreground">Password</span>
+                      <div class="flex items-center gap-2">
+                        <p class="font-mono text-sm">
+                          @if (showPassword()) {
+                            {{ credentials()!.password }}
+                          } @else {
+                            ••••••••••••
+                          }
+                        </p>
+                        <button
+                          (click)="togglePassword()"
+                          class="p-1 hover:bg-muted rounded"
+                          [title]="showPassword() ? 'Hide password' : 'Show password'"
+                        >
+                          @if (showPassword()) {
+                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                            </svg>
+                          } @else {
+                            <svg class="w-4 h-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                          }
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      (click)="hideCredentials()"
+                      class="text-sm text-muted-foreground hover:text-foreground"
+                    >
+                      Hide credentials
+                    </button>
+                  </div>
                 }
               </div>
             } @else {
-              <p class="text-muted-foreground">Connection string not available</p>
+              <p class="text-muted-foreground">Connection info not available</p>
             }
           </div>
 
@@ -163,15 +245,22 @@ import { AdminClusterDetail } from '../../../core/models';
 export class AdminClusterDetailComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private adminService = inject(AdminService);
+  private clusterService = inject(ClusterService);
 
   loading = signal(true);
   cluster = signal<AdminClusterDetail | null>(null);
   showPassword = signal(false);
 
+  // Credentials state
+  credentials = signal<ClusterCredentials | null>(null);
+  credentialsLoading = signal(false);
+
+  private clusterId: string = '';
+
   ngOnInit(): void {
-    const id = this.route.snapshot.paramMap.get('id');
-    if (id) {
-      this.adminService.getAdminCluster(id).subscribe({
+    this.clusterId = this.route.snapshot.paramMap.get('id') || '';
+    if (this.clusterId) {
+      this.adminService.getAdminCluster(this.clusterId).subscribe({
         next: (cluster) => {
           this.cluster.set(cluster);
           this.loading.set(false);
@@ -183,6 +272,24 @@ export class AdminClusterDetailComponent implements OnInit {
 
   togglePassword(): void {
     this.showPassword.update(v => !v);
+  }
+
+  loadCredentials(): void {
+    this.credentialsLoading.set(true);
+    this.clusterService.getClusterCredentials(this.clusterId).subscribe({
+      next: (creds) => {
+        this.credentials.set(creds);
+        this.credentialsLoading.set(false);
+      },
+      error: () => {
+        this.credentialsLoading.set(false);
+      }
+    });
+  }
+
+  hideCredentials(): void {
+    this.credentials.set(null);
+    this.showPassword.set(false);
   }
 
   getStatusClass(status: string): string {

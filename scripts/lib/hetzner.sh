@@ -226,6 +226,7 @@ hetzner_create_server_from_snapshot() {
     fi
 
     # Create server from snapshot
+    log_info "API request: name=$name type=$server_type location=$location image=$snapshot_id ssh_key=$ssh_key_id" >&2
     local result
     result=$(curl -s -X POST "${HETZNER_API}/servers" \
         -H "Authorization: Bearer $HETZNER_API_TOKEN" \
@@ -242,6 +243,7 @@ hetzner_create_server_from_snapshot() {
     # Check for API errors
     if echo "$result" | jq -e '.error' >/dev/null 2>&1; then
         log_error "Failed to create server: $(echo "$result" | jq -r '.error.message')" >&2
+        log_error "Full response: $result" >&2
         return 1
     fi
 

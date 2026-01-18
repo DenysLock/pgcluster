@@ -5,8 +5,20 @@ export interface ConnectionInfo {
   hostname: string;
   port: number;
   username: string;
-  password?: string;
-  connectionString?: string;
+  credentialsAvailable: boolean;
+}
+
+// Credentials from /api/v1/clusters/{id}/credentials endpoint
+export interface ClusterCredentials {
+  hostname: string;
+  port: number;
+  database: string;
+  username: string;
+  password: string;
+  connectionString: string;
+  sslMode: string;
+  warning: string;
+  retrievedAt: string;
 }
 
 // Resources info

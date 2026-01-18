@@ -16,7 +16,7 @@ export class AuthService {
   private token = signal<string | null>(null);
 
   readonly user = this.currentUser.asReadonly();
-  readonly isAuthenticated = computed(() => !!this.token());
+  readonly isAuthenticated = computed(() => !!this.token() && !this.isTokenExpired());
   readonly isAdmin = computed(() => this.currentUser()?.role === 'admin');
 
   constructor(
@@ -56,6 +56,26 @@ export class AuthService {
 
   getToken(): string | null {
     return this.token();
+  }
+
+  /**
+   * Check if the JWT token is expired by decoding the payload
+   * JWT structure: header.payload.signature (base64 encoded)
+   */
+  isTokenExpired(): boolean {
+    const token = this.token();
+    if (!token) return true;
+
+    try {
+      // Decode the payload (second part of JWT)
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      // exp is in seconds, Date.now() is in milliseconds
+      const expirationMs = payload.exp * 1000;
+      return expirationMs < Date.now();
+    } catch {
+      // Invalid token format - treat as expired
+      return true;
+    }
   }
 
   login(credentials: LoginRequest): Observable<AuthResponse> {

@@ -202,13 +202,18 @@ public class ProvisioningService {
                                   String etcdHosts, String replicatorPassword) {
         log.info("Uploading config to node {}...", node.getName());
 
-        // Generate docker-compose.yml
+        // Generate .env file with sensitive credentials (chmod 600)
+        String envFile = generateEnvFile(
+                cluster.getPostgresPassword(),
+                replicatorPassword
+        );
+
+        // Generate docker-compose.yml (references .env file, no inline passwords)
         String dockerCompose = generateDockerCompose(
                 cluster.getSlug(),
                 node.getName(),
                 node.getPublicIp(),
-                etcdCluster,
-                cluster.getPostgresPassword()
+                etcdCluster
         );
 
         // Generate patroni.yml
@@ -220,6 +225,25 @@ public class ProvisioningService {
                 cluster.getPostgresPassword(),
                 replicatorPassword,
                 cluster.getNodeSize()
+        );
+
+        // Ensure config directory exists
+        sshService.executeCommand(
+                node.getPublicIp(),
+                "mkdir -p /opt/pgcluster"
+        );
+
+        // Upload .env file
+        sshService.uploadContent(
+                node.getPublicIp(),
+                envFile,
+                "/opt/pgcluster/.env"
+        );
+
+        // Set restrictive permissions on .env file (owner read only)
+        sshService.executeCommand(
+                node.getPublicIp(),
+                "chmod 600 /opt/pgcluster/.env"
         );
 
         // Upload docker-compose.yml
@@ -236,6 +260,12 @@ public class ProvisioningService {
                 "/opt/pgcluster/patroni.yml"
         );
 
+        // Set permissions on patroni.yml - needs to be readable by postgres user (UID 999) in container
+        sshService.executeCommand(
+                node.getPublicIp(),
+                "chmod 644 /opt/pgcluster/patroni.yml"
+        );
+
         // Ensure data directories exist with correct permissions
         // PostgreSQL requires 700 permissions on data directory
         sshService.executeCommand(
@@ -243,7 +273,19 @@ public class ProvisioningService {
                 "mkdir -p /data/postgresql /data/etcd && chmod 700 /data/postgresql && chown -R 999:999 /data/postgresql"
         );
 
-        log.info("Node {} config uploaded", node.getName());
+        log.info("Node {} config uploaded with secure permissions", node.getName());
+    }
+
+    /**
+     * Generate .env file with sensitive credentials
+     */
+    private String generateEnvFile(String postgresPassword, String replicatorPassword) {
+        return """
+            # PostgreSQL Cluster Credentials
+            # This file contains sensitive data - do not share or commit
+            POSTGRES_PASSWORD=%s
+            REPLICATOR_PASSWORD=%s
+            """.formatted(postgresPassword, replicatorPassword);
     }
 
     /**
@@ -320,11 +362,11 @@ public class ProvisioningService {
     }
 
     /**
-     * Generate docker-compose.yml from template
+     * Generate docker-compose.yml from template.
+     * Passwords are loaded from .env file for security.
      */
     private String generateDockerCompose(String clusterSlug, String nodeName,
-                                         String nodeIp, String etcdCluster,
-                                         String postgresPassword) {
+                                         String nodeIp, String etcdCluster) {
         return """
             services:
               etcd:
@@ -388,11 +430,13 @@ public class ProvisioningService {
                 container_name: postgres-exporter
                 restart: unless-stopped
                 network_mode: host
+                env_file:
+                  - .env
                 depends_on:
                   patroni:
                     condition: service_healthy
                 environment:
-                  - DATA_SOURCE_NAME=postgresql://postgres:%s@127.0.0.1:5432/postgres?sslmode=disable
+                  - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD}@127.0.0.1:5432/postgres?sslmode=disable
                 command:
                   - '--web.listen-address=:9187'
             """.formatted(
@@ -405,8 +449,7 @@ public class ProvisioningService {
                 clusterSlug,        // ETCD_INITIAL_CLUSTER_TOKEN
                 nodeName,           // PATRONI_NAME
                 nodeIp,             // PATRONI_RESTAPI_CONNECT_ADDRESS
-                nodeIp,             // PATRONI_POSTGRESQL_CONNECT_ADDRESS
-                postgresPassword    // DATA_SOURCE_NAME password
+                nodeIp              // PATRONI_POSTGRESQL_CONNECT_ADDRESS
         );
     }
 

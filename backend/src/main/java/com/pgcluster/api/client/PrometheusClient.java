@@ -53,7 +53,15 @@ public class PrometheusClient {
      * Get health status for all nodes in a cluster
      */
     public List<NodeHealth> getClusterNodeHealth(String clusterSlug) {
-        String query = String.format("up{job=\"customer-patroni\",cluster_slug=\"%s\"}", clusterSlug);
+        // Validate and sanitize cluster slug to prevent PromQL injection
+        if (clusterSlug == null || !clusterSlug.matches("^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$")) {
+            log.warn("Invalid cluster slug format for Prometheus query: {}", clusterSlug);
+            return new ArrayList<>();
+        }
+
+        // Escape any special characters that could break the PromQL query
+        String escapedSlug = escapePromQLLabelValue(clusterSlug);
+        String query = String.format("up{job=\"customer-patroni\",cluster_slug=\"%s\"}", escapedSlug);
         QueryResponse response = query(query);
 
         List<NodeHealth> nodes = new ArrayList<>();
@@ -105,6 +113,20 @@ public class PrometheusClient {
             return instance.substring(0, colonIndex);
         }
         return instance;
+    }
+
+    /**
+     * Escape special characters in PromQL label values to prevent injection.
+     * In PromQL, backslash and double-quote need escaping in label matchers.
+     */
+    private String escapePromQLLabelValue(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replace("\\", "\\\\")  // Escape backslashes first
+                .replace("\"", "\\\"")  // Escape double quotes
+                .replace("\n", "\\n");  // Escape newlines
     }
 
     // DTOs

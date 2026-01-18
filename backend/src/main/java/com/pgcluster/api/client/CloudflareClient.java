@@ -1,6 +1,8 @@
 package com.pgcluster.api.client;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +31,8 @@ public class CloudflareClient {
     /**
      * Create a DNS A record
      */
+    @CircuitBreaker(name = "cloudflare")
+    @Retry(name = "cloudflare")
     public DnsRecord createDnsRecord(String name, String ip, boolean proxied) {
         HttpHeaders headers = createHeaders();
 
@@ -64,6 +68,8 @@ public class CloudflareClient {
     /**
      * Update a DNS record
      */
+    @CircuitBreaker(name = "cloudflare")
+    @Retry(name = "cloudflare")
     public DnsRecord updateDnsRecord(String recordId, String name, String ip, boolean proxied) {
         HttpHeaders headers = createHeaders();
 
@@ -95,6 +101,8 @@ public class CloudflareClient {
     /**
      * Delete a DNS record
      */
+    @CircuitBreaker(name = "cloudflare")
+    @Retry(name = "cloudflare")
     public void deleteDnsRecord(String recordId) {
         HttpHeaders headers = createHeaders();
         HttpEntity<?> entity = new HttpEntity<>(headers);
@@ -114,6 +122,8 @@ public class CloudflareClient {
     /**
      * Find DNS record by name
      */
+    @CircuitBreaker(name = "cloudflare")
+    @Retry(name = "cloudflare")
     public DnsRecord findDnsRecord(String name) {
         HttpHeaders headers = createHeaders();
         HttpEntity<?> entity = new HttpEntity<>(headers);

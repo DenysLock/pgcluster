@@ -55,8 +55,7 @@ public class ClusterResponse {
         private String hostname;
         private int port;
         private String username;
-        private String password;
-        private String connectionString;
+        private boolean credentialsAvailable;
     }
 
     @Data
@@ -81,18 +80,14 @@ public class ClusterResponse {
         private String location;
     }
 
-    public static ClusterResponse fromEntity(Cluster cluster, boolean includeCredentials) {
+    public static ClusterResponse fromEntity(Cluster cluster) {
         ConnectionInfo connInfo = null;
-        if (includeCredentials && cluster.getHostname() != null) {
+        if (cluster.getHostname() != null) {
             connInfo = ConnectionInfo.builder()
                     .hostname(cluster.getHostname())
                     .port(cluster.getPort())
                     .username("postgres")
-                    .password(cluster.getPostgresPassword())
-                    .connectionString(String.format("postgresql://postgres:%s@%s:%d/postgres",
-                            cluster.getPostgresPassword(),
-                            cluster.getHostname(),
-                            cluster.getPort()))
+                    .credentialsAvailable(cluster.getPostgresPassword() != null)
                     .build();
         }
 

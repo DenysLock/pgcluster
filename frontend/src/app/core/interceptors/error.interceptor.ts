@@ -11,11 +11,13 @@ export const errorInterceptor: HttpInterceptorFn = (req, next) => {
   return next(req).pipe(
     catchError((error: HttpErrorResponse) => {
       if (error.status === 401) {
-        // Token expired or invalid
+        // Token expired or invalid - force re-login
         authService.logout();
+        router.navigate(['/login']);
       } else if (error.status === 403) {
-        // Forbidden - redirect to dashboard
-        router.navigate(['/dashboard']);
+        // Permission denied - user is authenticated but not authorized
+        // Don't logout, just log for debugging
+        console.warn('Access forbidden:', error.url);
       }
 
       return throwError(() => error);

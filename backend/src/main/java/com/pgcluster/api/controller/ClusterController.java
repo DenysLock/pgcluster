@@ -1,6 +1,7 @@
 package com.pgcluster.api.controller;
 
 import com.pgcluster.api.model.dto.ClusterCreateRequest;
+import com.pgcluster.api.model.dto.ClusterCredentialsResponse;
 import com.pgcluster.api.model.dto.ClusterHealthResponse;
 import com.pgcluster.api.model.dto.ClusterListResponse;
 import com.pgcluster.api.model.dto.ClusterResponse;
@@ -68,6 +69,15 @@ public class ClusterController {
             @PathVariable UUID id,
             @AuthenticationPrincipal User user) {
         ClusterHealthResponse response = clusterService.getClusterHealth(id, user);
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/{id}/credentials")
+    @Operation(summary = "Get cluster credentials (sensitive - access is logged)")
+    public ResponseEntity<ClusterCredentialsResponse> getClusterCredentials(
+            @PathVariable UUID id,
+            @AuthenticationPrincipal User user) {
+        ClusterCredentialsResponse response = clusterService.getClusterCredentials(id, user);
         return ResponseEntity.ok(response);
     }
 }

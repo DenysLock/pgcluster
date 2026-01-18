@@ -1,6 +1,8 @@
 package com.pgcluster.api.client;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
+import io.github.resilience4j.retry.annotation.Retry;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +35,8 @@ public class HetznerClient {
     /**
      * Create a new server
      */
+    @CircuitBreaker(name = "hetzner")
+    @Retry(name = "hetzner")
     public ServerResponse createServer(CreateServerRequest request) {
         HttpHeaders headers = createHeaders();
         HttpEntity<CreateServerRequest> entity = new HttpEntity<>(request, headers);
@@ -58,6 +62,8 @@ public class HetznerClient {
     /**
      * Delete a server
      */
+    @CircuitBreaker(name = "hetzner")
+    @Retry(name = "hetzner")
     public void deleteServer(Long serverId) {
         HttpHeaders headers = createHeaders();
         HttpEntity<?> entity = new HttpEntity<>(headers);
@@ -77,6 +83,8 @@ public class HetznerClient {
     /**
      * Get server details
      */
+    @CircuitBreaker(name = "hetzner")
+    @Retry(name = "hetzner")
     public ServerResponse getServer(Long serverId) {
         HttpHeaders headers = createHeaders();
         HttpEntity<?> entity = new HttpEntity<>(headers);

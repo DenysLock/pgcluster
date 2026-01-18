@@ -29,6 +29,8 @@
 #   POSTGRES_PASSWORD    - PostgreSQL superuser password (generated if not set)
 #   GRAFANA_PASSWORD     - Grafana admin password (generated if not set)
 #   JWT_SECRET           - API JWT signing secret (generated if not set)
+#   FIELD_ENCRYPTION_KEY - AES-256 key for password encryption (generated if not set)
+#   INTERNAL_API_KEY     - API key for /internal/* endpoints (generated if not set)
 #
 
 set -e
@@ -75,7 +77,9 @@ DB_PASSWORD="${DB_PASSWORD:-$(openssl rand -base64 24)}"
 REPLICATOR_PASSWORD="${REPLICATOR_PASSWORD:-$(openssl rand -base64 24)}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(openssl rand -base64 24)}"
 GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-$(openssl rand -base64 16)}"
-JWT_SECRET="${JWT_SECRET:-$(openssl rand -base64 32)}"
+JWT_SECRET="${JWT_SECRET:-$(openssl rand -base64 48)}"
+FIELD_ENCRYPTION_KEY="${FIELD_ENCRYPTION_KEY:-$(openssl rand -base64 32)}"
+INTERNAL_API_KEY="${INTERNAL_API_KEY:-$(openssl rand -hex 32)}"
 
 # Validate required environment variables
 validate_env() {
@@ -626,6 +630,8 @@ nginx -t && systemctl reload nginx'
     log_info "    -e DATABASE_USER=dbaas \\"
     log_info "    -e DATABASE_PASSWORD=\"$DB_PASSWORD\" \\"
     log_info "    -e JWT_SECRET=\"$JWT_SECRET\" \\"
+    log_info "    -e FIELD_ENCRYPTION_KEY=\"$FIELD_ENCRYPTION_KEY\" \\"
+    log_info "    -e INTERNAL_API_KEY=\"$INTERNAL_API_KEY\" \\"
     log_info "    -e HETZNER_API_TOKEN=\"$HETZNER_API_TOKEN\" \\"
     log_info "    -e HETZNER_SSH_KEY_IDS=\"$PROVISIONING_KEY_ID\" \\"
     log_info "    -e CUSTOMER_SNAPSHOT_ID=\"${CUSTOMER_SNAPSHOT_ID:-REPLACE_WITH_SNAPSHOT_ID}\" \\"
@@ -675,6 +681,8 @@ nginx -t && systemctl reload nginx'
     echo -e "${YELLOW}╠════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${YELLOW}║${NC}   DATABASE_PASSWORD=$DB_PASSWORD  ${YELLOW}║${NC}"
     echo -e "${YELLOW}║${NC}   JWT_SECRET=$JWT_SECRET  ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}   FIELD_ENCRYPTION_KEY=$FIELD_ENCRYPTION_KEY  ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}   INTERNAL_API_KEY=$INTERNAL_API_KEY  ${YELLOW}║${NC}"
     echo -e "${YELLOW}║${NC}   HETZNER_SSH_KEY_IDS=$PROVISIONING_KEY_ID  ${YELLOW}║${NC}"
     echo -e "${YELLOW}║${NC}   CUSTOMER_SNAPSHOT_ID=${CUSTOMER_SNAPSHOT_ID:-<run ./scripts/create-snapshot.sh>}  ${YELLOW}║${NC}"
     echo -e "${YELLOW}╚════════════════════════════════════════════════════════════════════╝${NC}"

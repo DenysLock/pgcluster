@@ -162,15 +162,9 @@ export class ClusterCreateComponent {
 
   plans = [
     {
-      id: 'dedicated-starter',
-      name: 'Starter',
-      description: 'Perfect for development and small projects',
-      price: 'Free during MVP'
-    },
-    {
-      id: 'dedicated-professional',
-      name: 'Professional',
-      description: 'For production workloads with more resources',
+      id: 'dedicated',
+      name: 'Dedicated',
+      description: '3-node high availability PostgreSQL cluster',
       price: 'Free during MVP'
     }
   ];
@@ -186,7 +180,7 @@ export class ClusterCreateComponent {
         Validators.minLength(3),
         Validators.pattern(/^[a-z0-9-]+$/)
       ]],
-      plan: ['dedicated-starter', Validators.required]
+      plan: ['dedicated', Validators.required]
     });
   }
 

@@ -50,7 +50,7 @@ public class AdminService {
         List<Cluster> clusters = clusterRepository.findAllWithUser();
 
         List<AdminClusterResponse> responses = clusters.stream()
-                .map(c -> AdminClusterResponse.fromEntity(c, false))
+                .map(AdminClusterResponse::fromEntity)
                 .toList();
 
         return AdminClusterListResponse.builder()
@@ -67,7 +67,7 @@ public class AdminService {
         Cluster cluster = clusterRepository.findByIdWithUserAndNodes(id)
                 .orElseThrow(() -> new ApiException("Cluster not found", HttpStatus.NOT_FOUND));
 
-        return AdminClusterResponse.fromEntity(cluster, true);
+        return AdminClusterResponse.fromEntity(cluster);
     }
 
     /**

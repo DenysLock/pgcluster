@@ -21,8 +21,14 @@ public class SshService {
     @Value("${ssh.private-key-path:/home/appuser/.ssh/id_rsa}")
     private String privateKeyPath;
 
+    private final HostKeyVerifier hostKeyVerifier;
+
     private static final int SSH_PORT = 22;
     private static final int TIMEOUT_MS = 30000;
+
+    public SshService(HostKeyVerifier hostKeyVerifier) {
+        this.hostKeyVerifier = hostKeyVerifier;
+    }
 
     /**
      * Execute a command on a remote host
@@ -188,14 +194,24 @@ public class SshService {
             jsch.addIdentity(privateKeyPath);
         }
 
+        // Use TOFU host key verification instead of disabling verification
+        jsch.setHostKeyRepository(hostKeyVerifier);
+
         Session session = jsch.getSession(sshUser, host, SSH_PORT);
 
-        // Disable strict host key checking for automation
+        // Set preferred host key algorithms
         java.util.Properties config = new java.util.Properties();
-        config.put("StrictHostKeyChecking", "no");
+        config.put("PreferredAuthentications", "publickey");
         session.setConfig(config);
 
         return session;
+    }
+
+    /**
+     * Remove host key trust when server is deleted.
+     */
+    public void removeHostKeyTrust(String host) {
+        hostKeyVerifier.removeHost(host);
     }
 
     @Data

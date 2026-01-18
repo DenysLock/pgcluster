@@ -2,6 +2,7 @@ package com.pgcluster.api.service;
 
 import com.pgcluster.api.exception.ApiException;
 import com.pgcluster.api.model.dto.ClusterCreateRequest;
+import com.pgcluster.api.model.dto.ClusterCredentialsResponse;
 import com.pgcluster.api.model.dto.ClusterHealthResponse;
 import com.pgcluster.api.model.dto.ClusterListResponse;
 import com.pgcluster.api.model.dto.ClusterResponse;
@@ -41,7 +42,7 @@ public class ClusterService {
         List<Cluster> clusters = clusterRepository.findByUserOrderByCreatedAtDesc(user);
 
         List<ClusterResponse> responses = clusters.stream()
-                .map(c -> ClusterResponse.fromEntity(c, false))
+                .map(ClusterResponse::fromEntity)
                 .toList();
 
         return ClusterListResponse.builder()
@@ -54,7 +55,36 @@ public class ClusterService {
         Cluster cluster = clusterRepository.findByIdAndUserWithNodes(id, user)
                 .orElseThrow(() -> new ApiException("Cluster not found", HttpStatus.NOT_FOUND));
 
-        return ClusterResponse.fromEntity(cluster, true);
+        return ClusterResponse.fromEntity(cluster);
+    }
+
+    /**
+     * Get cluster credentials, access is logged.
+     */
+    public ClusterCredentialsResponse getClusterCredentials(UUID id, User user) {
+        Cluster cluster = clusterRepository.findByIdAndUser(id, user)
+                .orElseThrow(() -> new ApiException("Cluster not found", HttpStatus.NOT_FOUND));
+
+        if (cluster.getHostname() == null || cluster.getPostgresPassword() == null) {
+            throw new ApiException("Cluster credentials not yet available", HttpStatus.SERVICE_UNAVAILABLE);
+        }
+
+        log.info("Credentials accessed for cluster {} by user {}", cluster.getSlug(), user.getEmail());
+
+        return ClusterCredentialsResponse.builder()
+                .hostname(cluster.getHostname())
+                .port(cluster.getPort())
+                .database("postgres")
+                .username("postgres")
+                .password(cluster.getPostgresPassword())
+                .connectionString(String.format("postgresql://postgres:%s@%s:%d/postgres",
+                        cluster.getPostgresPassword(),
+                        cluster.getHostname(),
+                        cluster.getPort()))
+                .sslMode("prefer")
+                .retrievedAt(java.time.Instant.now())
+                .warning("Store these credentials securely. Do not share or commit to version control.")
+                .build();
     }
 
     @Transactional
@@ -62,12 +92,12 @@ public class ClusterService {
         // Generate slug if not provided
         String slug = request.getSlug();
         if (slug == null || slug.isBlank()) {
-            slug = generateSlug(request.getName());
-        }
-
-        // Check if slug is unique
-        if (clusterRepository.existsBySlug(slug)) {
-            throw new ApiException("Cluster slug already exists", HttpStatus.CONFLICT);
+            slug = generateUniqueSlug(request.getName());
+        } else {
+            // User provided custom slug - check uniqueness
+            if (clusterRepository.existsBySlug(slug)) {
+                throw new ApiException("Cluster slug already exists", HttpStatus.CONFLICT);
+            }
         }
 
         // Generate postgres password
@@ -99,7 +129,7 @@ public class ClusterService {
             }
         });
 
-        return ClusterResponse.fromEntity(cluster, true);
+        return ClusterResponse.fromEntity(cluster);
     }
 
     @Transactional
@@ -223,14 +253,46 @@ public class ClusterService {
                 .build();
     }
 
-    private String generateSlug(String name) {
+    /**
+     * Generate a unique slug with retry logic to handle collisions.
+     * Uses 6-character alphanumeric suffix
+     */
+    private String generateUniqueSlug(String name) {
         String baseSlug = name.toLowerCase()
                 .replaceAll("[^a-z0-9]+", "-")
                 .replaceAll("^-|-$", "");
 
-        // Add random suffix to ensure uniqueness
-        String suffix = String.format("%04d", RANDOM.nextInt(10000));
-        return baseSlug + "-" + suffix;
+        // Limit base slug length to keep total slug reasonable
+        if (baseSlug.length() > 50) {
+            baseSlug = baseSlug.substring(0, 50);
+        }
+
+        // Try up to 10 times to generate unique slug
+        for (int attempt = 0; attempt < 10; attempt++) {
+            String suffix = generateAlphanumericSuffix(6);
+            String slug = baseSlug + "-" + suffix;
+
+            if (!clusterRepository.existsBySlug(slug)) {
+                return slug;
+            }
+            log.debug("Slug collision for '{}', retrying (attempt {})", slug, attempt + 1);
+        }
+
+        // Extremely unlikely to reach here
+        throw new ApiException("Unable to generate unique slug after 10 attempts", HttpStatus.CONFLICT);
+    }
+
+    /**
+     * Generate random alphanumeric suffix.
+     * 6 chars from 36 characters (a-z, 0-9) = 36^6 combinations
+     */
+    private String generateAlphanumericSuffix(int length) {
+        String chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(chars.charAt(RANDOM.nextInt(chars.length())));
+        }
+        return sb.toString();
     }
 
     private String generatePassword(int length) {

@@ -51,8 +51,7 @@ export interface AdminClusterDetail {
     hostname: string;
     port: number;
     username: string;
-    password?: string;
-    connection_string?: string;
+    credentialsAvailable: boolean;
   };
   resources?: {
     storage_gb: number;

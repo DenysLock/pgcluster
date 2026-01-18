@@ -77,9 +77,8 @@ public class AdminClusterResponse {
         private String hostname;
         private int port;
         private String username;
-        private String password;
-        @JsonProperty("connection_string")
-        private String connectionString;
+        @JsonProperty("credentials_available")
+        private boolean credentialsAvailable;
     }
 
     @Data
@@ -109,18 +108,14 @@ public class AdminClusterResponse {
         private String location;
     }
 
-    public static AdminClusterResponse fromEntity(Cluster cluster, boolean includeCredentials) {
+    public static AdminClusterResponse fromEntity(Cluster cluster) {
         ConnectionInfo connInfo = null;
-        if (includeCredentials && cluster.getHostname() != null) {
+        if (cluster.getHostname() != null) {
             connInfo = ConnectionInfo.builder()
                     .hostname(cluster.getHostname())
                     .port(cluster.getPort())
                     .username("postgres")
-                    .password(cluster.getPostgresPassword())
-                    .connectionString(String.format("postgresql://postgres:%s@%s:%d/postgres",
-                            cluster.getPostgresPassword(),
-                            cluster.getHostname(),
-                            cluster.getPort()))
+                    .credentialsAvailable(cluster.getPostgresPassword() != null)
                     .build();
         }
 
