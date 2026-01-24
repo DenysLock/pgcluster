@@ -4,7 +4,6 @@ import { interval, Subscription } from 'rxjs';
 import { MetricsService } from '../../../../core/services/metrics.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { ClusterMetrics, TimeRange } from '../../../../core/models';
-import { CardComponent, SpinnerComponent } from '../../../../shared/components';
 import { MetricChartComponent } from './metric-chart.component';
 
 @Component({
@@ -12,24 +11,23 @@ import { MetricChartComponent } from './metric-chart.component';
   standalone: true,
   imports: [
     CommonModule,
-    CardComponent,
-    SpinnerComponent,
     MetricChartComponent
   ],
   template: `
-    <app-card title="Metrics" description="Real-time cluster performance metrics">
+    <div class="card">
+      <div class="card-header">Metrics</div>
       <div class="space-y-6">
         <!-- Time Range Selector -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2 text-sm text-muted-foreground">
             @if (loading() && metrics()) {
-              <app-spinner size="sm" />
+              <span class="spinner w-4 h-4"></span>
               <span>Refreshing...</span>
             } @else if (metrics()) {
               <span>Last updated: {{ formatTime(metrics()!.queryTime) }}</span>
             }
           </div>
-          <div class="flex items-center gap-1 bg-muted rounded-lg p-1">
+          <div class="flex items-center gap-1 bg-bg-tertiary border border-border p-1">
             @for (range of timeRanges; track range.value) {
               <button
                 (click)="selectRange(range.value)"
@@ -45,7 +43,7 @@ import { MetricChartComponent } from './metric-chart.component';
         @if (loading() && !metrics()) {
           <!-- Initial loading state -->
           <div class="flex items-center justify-center py-16">
-            <app-spinner size="lg" />
+            <span class="spinner w-8 h-8"></span>
           </div>
         } @else if (error() && !metrics()) {
           <!-- Error state (no data) -->
@@ -56,7 +54,7 @@ import { MetricChartComponent } from './metric-chart.component';
             <p class="text-muted-foreground mb-2">{{ error() }}</p>
             <button
               (click)="loadMetrics()"
-              class="text-sm text-primary hover:underline"
+              class="text-sm text-neon-green hover:underline"
             >
               Try again
             </button>
@@ -94,21 +92,21 @@ import { MetricChartComponent } from './metric-chart.component';
             />
             <app-metric-chart
               title="Replication Lag"
-              unit="bytes"
+              unit="s"
               [series]="metrics()!.replicationLag"
             />
           </div>
 
           <!-- No Data Warning -->
           @if (hasNoData()) {
-            <div class="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4">
+            <div class="bg-status-warning/10 border border-status-warning p-4">
               <div class="flex items-start gap-3">
-                <svg class="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-5 h-5 text-status-warning shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
                 <div>
-                  <p class="font-medium text-amber-800 dark:text-amber-200">Limited metrics available</p>
-                  <p class="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                  <p class="font-semibold text-status-warning">Limited metrics available</p>
+                  <p class="text-sm text-status-warning/80 mt-1">
                     Some metrics may not be available yet. This can happen if the cluster was recently created or if Prometheus hasn't scraped the metrics yet.
                   </p>
                 </div>
@@ -117,7 +115,7 @@ import { MetricChartComponent } from './metric-chart.component';
           }
         }
       </div>
-    </app-card>
+    </div>
   `
 })
 export class MetricsCardComponent implements OnInit, OnDestroy {
@@ -191,9 +189,9 @@ export class MetricsCardComponent implements OnInit, OnDestroy {
   }
 
   getButtonClass(range: TimeRange): string {
-    const base = 'px-3 py-1.5 text-sm font-medium rounded-md transition-colors disabled:opacity-50';
+    const base = 'px-3 py-1.5 text-sm font-semibold uppercase tracking-wide transition-colors disabled:opacity-50';
     if (this.selectedRange() === range) {
-      return `${base} bg-background text-foreground shadow-sm`;
+      return `${base} bg-neon-green text-bg-primary`;
     }
     return `${base} text-muted-foreground hover:text-foreground`;
   }

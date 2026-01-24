@@ -18,17 +18,9 @@ export const routes: Routes = [
   {
     path: '',
     canActivate: [authGuard],
-    loadComponent: () => import('./shared/layouts/dashboard-layout/dashboard-layout.component').then(m => m.DashboardLayoutComponent),
+    loadComponent: () => import('./shared/layouts/app-shell/app-shell.component').then(m => m.AppShellComponent),
     children: [
-      { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
-      {
-        path: 'dashboard',
-        loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
-      },
-      {
-        path: 'clusters',
-        loadComponent: () => import('./features/clusters/cluster-list/cluster-list.component').then(m => m.ClusterListComponent)
-      },
+      { path: '', redirectTo: 'clusters/new', pathMatch: 'full' },
       {
         path: 'clusters/new',
         loadComponent: () => import('./features/clusters/cluster-create/cluster-create.component').then(m => m.ClusterCreateComponent)
@@ -48,7 +40,7 @@ export const routes: Routes = [
   {
     path: 'admin',
     canActivate: [authGuard, adminGuard],
-    loadComponent: () => import('./shared/layouts/dashboard-layout/dashboard-layout.component').then(m => m.DashboardLayoutComponent),
+    loadComponent: () => import('./shared/layouts/app-shell/app-shell.component').then(m => m.AppShellComponent),
     children: [
       {
         path: '',
@@ -70,5 +62,5 @@ export const routes: Routes = [
   },
 
   // Catch-all redirect
-  { path: '**', redirectTo: 'dashboard' }
+  { path: '**', redirectTo: 'clusters/new' }
 ];

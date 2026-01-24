@@ -6,7 +6,8 @@ module.exports = {
   ],
   theme: {
     fontFamily: {
-      sans: ['Inter', 'system-ui', 'sans-serif'],
+      mono: ['IBM Plex Mono', 'monospace'],
+      sans: ['IBM Plex Mono', 'monospace'],
     },
     container: {
       center: true,
@@ -17,44 +18,66 @@ module.exports = {
     },
     extend: {
       colors: {
-        border: 'hsl(var(--border))',
-        input: 'hsl(var(--input))',
-        ring: 'hsl(var(--ring))',
-        background: 'hsl(var(--background))',
-        foreground: 'hsl(var(--foreground))',
+        // Background colors
+        bg: {
+          primary: '#0a0a0a',
+          secondary: '#111111',
+          tertiary: '#1a1a1a',
+        },
+        // Status colors
+        status: {
+          running: '#00ff00',
+          warning: '#ffaa00',
+          error: '#ff3333',
+          stopped: '#666666',
+        },
+        // Neon accent colors
+        neon: {
+          green: '#00ff00',
+          cyan: '#00aaff',
+          purple: '#aa00ff',
+        },
+        // Legacy color mappings for existing components
+        border: '#222222',
+        input: '#1a1a1a',
+        ring: '#00ff00',
+        background: '#0a0a0a',
+        foreground: '#e0e0e0',
         primary: {
-          DEFAULT: 'hsl(var(--primary))',
-          foreground: 'hsl(var(--primary-foreground))',
+          DEFAULT: '#00ff00',
+          foreground: '#0a0a0a',
         },
         secondary: {
-          DEFAULT: 'hsl(var(--secondary))',
-          foreground: 'hsl(var(--secondary-foreground))',
+          DEFAULT: '#1a1a1a',
+          foreground: '#e0e0e0',
         },
         destructive: {
-          DEFAULT: 'hsl(var(--destructive))',
-          foreground: 'hsl(var(--destructive-foreground))',
+          DEFAULT: '#ff3333',
+          foreground: '#ffffff',
         },
         muted: {
-          DEFAULT: 'hsl(var(--muted))',
-          foreground: 'hsl(var(--muted-foreground))',
+          DEFAULT: '#1a1a1a',
+          foreground: '#999999',
         },
         accent: {
-          DEFAULT: 'hsl(var(--accent))',
-          foreground: 'hsl(var(--accent-foreground))',
+          DEFAULT: '#00aaff',
+          foreground: '#0a0a0a',
         },
         popover: {
-          DEFAULT: 'hsl(var(--popover))',
-          foreground: 'hsl(var(--popover-foreground))',
+          DEFAULT: '#111111',
+          foreground: '#e0e0e0',
         },
         card: {
-          DEFAULT: 'hsl(var(--card))',
-          foreground: 'hsl(var(--card-foreground))',
+          DEFAULT: '#111111',
+          foreground: '#e0e0e0',
         },
       },
       borderRadius: {
-        lg: 'var(--radius)',
-        md: 'calc(var(--radius) - 2px)',
-        sm: 'calc(var(--radius) - 4px)',
+        lg: '0',
+        md: '0',
+        sm: '0',
+        DEFAULT: '0',
+        none: '0',
       },
       keyframes: {
         'accordion-down': {
@@ -69,11 +92,16 @@ module.exports = {
           from: { transform: 'rotate(0deg)' },
           to: { transform: 'rotate(360deg)' },
         },
+        'pulse-glow': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0.5' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
         'spin-slow': 'spin-slow 1s linear infinite',
+        'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
       },
     },
   },

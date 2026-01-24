@@ -1,4 +1,4 @@
-export type ClusterStatus = 'pending' | 'creating' | 'provisioning' | 'forming' | 'running' | 'degraded' | 'error' | 'deleting';
+export type ClusterStatus = 'pending' | 'creating' | 'provisioning' | 'forming' | 'running' | 'degraded' | 'error' | 'deleting' | 'deleted';
 
 // Connection info from API
 export interface ConnectionInfo {

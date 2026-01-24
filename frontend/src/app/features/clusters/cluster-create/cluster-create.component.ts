@@ -3,60 +3,54 @@ import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { ClusterService } from '../../../core/services/cluster.service';
-import { SpinnerComponent } from '../../../shared/components';
 
 @Component({
   selector: 'app-cluster-create',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, SpinnerComponent],
+  imports: [CommonModule, ReactiveFormsModule, RouterLink],
   template: `
     <div class="max-w-2xl mx-auto space-y-6">
       <!-- Header -->
       <div>
-        <a routerLink="/clusters" class="text-sm text-muted-foreground hover:text-foreground inline-flex items-center mb-4">
-          <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-          </svg>
-          Back to Clusters
-        </a>
-        <h1 class="text-2xl font-bold tracking-tight">Create Cluster</h1>
-        <p class="text-muted-foreground">Create a new PostgreSQL cluster with high availability</p>
+        <h1 class="text-xl font-semibold uppercase tracking-wider text-foreground">Create Cluster</h1>
+        <p class="text-muted-foreground text-sm mt-1">Deploy a new PostgreSQL cluster with high availability</p>
       </div>
 
       <!-- Form -->
-      <div class="rounded-lg border bg-card p-6">
+      <div class="card">
         @if (error()) {
-          <div class="bg-destructive/10 border border-destructive/20 text-destructive px-4 py-3 rounded-md mb-6 text-sm">
+          <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 mb-6 text-sm">
             {{ error() }}
           </div>
         }
 
         <form [formGroup]="form" (ngSubmit)="onSubmit()" class="space-y-6">
           <div class="space-y-2">
-            <label for="name" class="text-sm font-medium leading-none">Cluster Name</label>
+            <label for="name" class="label">Cluster Name</label>
             <input
               id="name"
               type="text"
               formControlName="name"
-              class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              class="input"
+              [class.border-status-error]="form.get('name')?.touched && form.get('name')?.invalid"
               placeholder="my-database"
             />
             <p class="text-xs text-muted-foreground">
               Use lowercase letters, numbers, and hyphens only. This will be used in your connection URL.
             </p>
             @if (form.get('name')?.touched && form.get('name')?.errors?.['required']) {
-              <p class="text-xs text-destructive">Cluster name is required</p>
+              <p class="text-xs text-status-error">Cluster name is required</p>
             }
             @if (form.get('name')?.touched && form.get('name')?.errors?.['pattern']) {
-              <p class="text-xs text-destructive">Only lowercase letters, numbers, and hyphens allowed</p>
+              <p class="text-xs text-status-error">Only lowercase letters, numbers, and hyphens allowed</p>
             }
             @if (form.get('name')?.touched && form.get('name')?.errors?.['minlength']) {
-              <p class="text-xs text-destructive">Name must be at least 3 characters</p>
+              <p class="text-xs text-status-error">Name must be at least 3 characters</p>
             }
           </div>
 
           <div class="space-y-2">
-            <label class="text-sm font-medium leading-none">Plan</label>
+            <label class="label">Plan</label>
             <div class="grid gap-4 md:grid-cols-2">
               @for (plan of plans; track plan.id) {
                 <label
@@ -71,21 +65,21 @@ import { SpinnerComponent } from '../../../shared/components';
                     class="sr-only"
                   />
                   <div class="flex items-start gap-3">
-                    <div class="w-10 h-10 rounded-lg bg-muted flex items-center justify-center shrink-0">
-                      <svg class="w-5 h-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div class="w-10 h-10 bg-bg-tertiary border border-border flex items-center justify-center shrink-0">
+                      <svg class="w-5 h-5 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
                       </svg>
                     </div>
                     <div class="flex-1">
-                      <p class="font-medium">{{ plan.name }}</p>
+                      <p class="font-semibold text-foreground">{{ plan.name }}</p>
                       <p class="text-sm text-muted-foreground">{{ plan.description }}</p>
-                      <p class="text-sm font-medium mt-2">{{ plan.price }}</p>
+                      <p class="text-sm font-semibold text-neon-green mt-2">{{ plan.price }}</p>
                     </div>
                   </div>
                   @if (form.get('plan')?.value === plan.id) {
                     <div class="absolute top-3 right-3">
-                      <svg class="w-5 h-5 text-primary" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      <svg class="w-5 h-5 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                       </svg>
                     </div>
                   }
@@ -95,35 +89,35 @@ import { SpinnerComponent } from '../../../shared/components';
           </div>
 
           <!-- Features -->
-          <div class="rounded-lg bg-muted/50 p-4 space-y-3">
-            <h3 class="text-sm font-medium">All plans include:</h3>
-            <ul class="grid gap-2 text-sm text-muted-foreground">
+          <div class="bg-bg-tertiary border border-border p-4 space-y-3">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">All plans include:</h3>
+            <ul class="grid gap-2 text-sm text-gray-300">
               <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
                 3-node high availability cluster
               </li>
               <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
                 Automatic failover with Patroni
               </li>
               <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
                 PgBouncer connection pooling
               </li>
               <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
                 Floating IP for zero-downtime failover
               </li>
               <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
                 SSL/TLS encryption
@@ -131,21 +125,14 @@ import { SpinnerComponent } from '../../../shared/components';
             </ul>
           </div>
 
-          <div class="flex gap-3">
-            <button
-              type="button"
-              routerLink="/clusters"
-              class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2"
-            >
-              Cancel
-            </button>
+          <div class="flex gap-3 pt-2">
             <button
               type="submit"
               [disabled]="loading() || form.invalid"
-              class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2 flex-1"
+              class="btn-primary flex-1"
             >
               @if (loading()) {
-                <app-spinner size="sm" class="mr-2" />
+                <span class="spinner w-4 h-4 mr-2"></span>
               }
               Create Cluster
             </button>
@@ -185,11 +172,11 @@ export class ClusterCreateComponent {
   }
 
   getPlanCardClass(planId: string): string {
-    const base = 'relative block cursor-pointer rounded-lg border p-4 transition-colors';
+    const base = 'relative block cursor-pointer border p-4 transition-colors bg-bg-secondary';
     const isSelected = this.form.get('plan')?.value === planId;
     return isSelected
-      ? `${base} border-primary bg-primary/5`
-      : `${base} border-border hover:border-primary/50`;
+      ? `${base} border-neon-green`
+      : `${base} border-border hover:border-neon-green/50`;
   }
 
   onSubmit(): void {

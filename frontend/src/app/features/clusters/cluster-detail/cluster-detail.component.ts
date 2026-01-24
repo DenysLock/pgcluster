@@ -8,10 +8,8 @@ import { Cluster, ClusterCredentials, ClusterHealth } from '../../../core/models
 import { POLLING_INTERVALS } from '../../../core/constants';
 import {
   StatusBadgeComponent,
-  SpinnerComponent,
   ConnectionStringComponent,
-  ConfirmDialogComponent,
-  CardComponent
+  ConfirmDialogComponent
 } from '../../../shared/components';
 import { BackupsCardComponent } from './backups-card/backups-card.component';
 import { ExportsCardComponent } from './exports-card/exports-card.component';
@@ -30,10 +28,8 @@ interface ProvisioningStep {
     CommonModule,
     RouterLink,
     StatusBadgeComponent,
-    SpinnerComponent,
     ConnectionStringComponent,
     ConfirmDialogComponent,
-    CardComponent,
     BackupsCardComponent,
     ExportsCardComponent,
     MetricsCardComponent
@@ -42,45 +38,66 @@ interface ProvisioningStep {
     <div class="space-y-6">
       @if (loading()) {
         <div class="flex items-center justify-center py-12">
-          <app-spinner size="lg" />
+          <span class="spinner w-8 h-8"></span>
         </div>
       } @else if (cluster()) {
-        <!-- Header -->
-        <div class="flex items-start justify-between">
-          <div>
-            <a routerLink="/clusters" class="text-sm text-muted-foreground hover:text-foreground inline-flex items-center mb-4">
-              <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+        <!-- Deleted Cluster Message -->
+        @if (isDeleted()) {
+          <div class="card">
+            <div class="text-center py-8">
+              <svg class="w-12 h-12 mx-auto mb-4 text-status-stopped" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
               </svg>
-              Back to Clusters
-            </a>
-            <div class="flex items-center gap-3">
-              <h1 class="text-2xl font-bold tracking-tight">{{ cluster()?.name }}</h1>
-              <app-status-badge [status]="cluster()?.status || 'unknown'" />
-            </div>
-            <p class="text-muted-foreground mt-1">Created {{ formatDate(cluster()?.createdAt || '') }}</p>
-          </div>
-        </div>
 
-        <!-- Provisioning Progress (only during creating/pending) -->
-        @if (isProvisioning()) {
-          <app-card title="Provisioning Progress" description="Your cluster is being created">
+              <!-- Cluster name + badge -->
+              <div class="flex items-center justify-center gap-3 mb-4">
+                <h2 class="text-xl font-semibold uppercase tracking-wider text-foreground">{{ cluster()?.name }}</h2>
+                <app-status-badge status="deleted" />
+              </div>
+
+              <!-- Created date -->
+              <p class="text-muted-foreground mb-2">Created {{ formatDate(cluster()?.createdAt || '') }}</p>
+
+              <!-- Configuration summary -->
+              <p class="text-sm text-muted-foreground">
+                {{ cluster()?.nodeCount }}× {{ cluster()?.nodeSize }} nodes • PostgreSQL {{ cluster()?.postgresVersion }} • {{ cluster()?.region }}
+              </p>
+
+              <a routerLink="/clusters/new" class="btn-primary mt-8 inline-block">Create New Cluster</a>
+            </div>
+          </div>
+        } @else {
+          <!-- Header -->
+          <div class="flex items-start justify-between">
+            <div>
+              <div class="flex items-center gap-3">
+                <h1 class="text-xl font-semibold uppercase tracking-wider text-foreground">{{ cluster()?.name }}</h1>
+                <app-status-badge [status]="cluster()?.status || 'unknown'" />
+              </div>
+              <p class="text-muted-foreground text-sm mt-1">Created {{ formatDate(cluster()?.createdAt || '') }}</p>
+            </div>
+          </div>
+
+          <!-- Provisioning Progress (only during creating/pending) -->
+          @if (isProvisioning()) {
+          <div class="card">
+            <div class="card-header">Provisioning Progress</div>
             <div class="space-y-4">
               @for (step of provisioningSteps; track step.id) {
                 <div class="flex items-center gap-3">
                   <!-- Step indicator -->
                   @if (step.id < currentStep()) {
-                    <span class="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center text-sm font-medium">
+                    <span class="w-7 h-7 bg-neon-green text-bg-primary flex items-center justify-center text-sm font-semibold">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                       </svg>
                     </span>
                   } @else if (step.id === currentStep()) {
-                    <span class="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium animate-pulse">
+                    <span class="w-7 h-7 bg-status-warning text-bg-primary flex items-center justify-center text-sm font-semibold animate-pulse">
                       {{ step.id }}
                     </span>
                   } @else {
-                    <span class="w-7 h-7 rounded-full bg-muted text-muted-foreground flex items-center justify-center text-sm font-medium">
+                    <span class="w-7 h-7 bg-bg-tertiary border border-border text-muted-foreground flex items-center justify-center text-sm font-medium">
                       {{ step.id }}
                     </span>
                   }
@@ -91,69 +108,66 @@ interface ProvisioningStep {
                 </div>
               }
             </div>
-          </app-card>
+          </div>
         }
 
-        <!-- Cluster Health (always visible) -->
-        <app-card title="Cluster Health" description="Real-time status of your PostgreSQL cluster">
-          @if (!isRunning()) {
-            <div class="flex items-center gap-3 text-muted-foreground py-4">
-              <app-spinner size="sm" />
-              <span>Waiting for cluster to be ready...</span>
-            </div>
-          } @else if (health()) {
+          <!-- Cluster Health (only when running) -->
+          @if (isRunning()) {
+            <div class="card">
+              <div class="card-header">Cluster Health</div>
+              @if (health()) {
             <div class="space-y-4">
               <!-- Summary -->
               <div class="grid gap-4 md:grid-cols-3">
-                <div class="rounded-lg bg-muted/50 p-4">
-                  <p class="text-sm text-muted-foreground mb-1">Status</p>
+                <div class="bg-bg-tertiary border border-border p-4">
+                  <p class="text-xs uppercase tracking-wider text-muted-foreground mb-1">Status</p>
                   <div class="flex items-center gap-2">
-                    <span [class]="getHealthStatusClass(health()?.overallStatus)" class="inline-block w-2 h-2 rounded-full"></span>
-                    <p class="text-lg font-semibold capitalize">{{ health()?.overallStatus || 'unknown' }}</p>
+                    <span [class]="getHealthStatusClass(health()?.overallStatus)" class="inline-block w-2 h-2"></span>
+                    <p class="text-lg font-semibold uppercase">{{ health()?.overallStatus || 'unknown' }}</p>
                   </div>
                 </div>
-                <div class="rounded-lg bg-muted/50 p-4">
-                  <p class="text-sm text-muted-foreground mb-1">Leader</p>
+                <div class="bg-bg-tertiary border border-border p-4">
+                  <p class="text-xs uppercase tracking-wider text-muted-foreground mb-1">Leader</p>
                   <p class="text-lg font-semibold font-mono">{{ health()?.patroni?.leader || 'Electing...' }}</p>
                 </div>
-                <div class="rounded-lg bg-muted/50 p-4">
-                  <p class="text-sm text-muted-foreground mb-1">Reachable Nodes</p>
+                <div class="bg-bg-tertiary border border-border p-4">
+                  <p class="text-xs uppercase tracking-wider text-muted-foreground mb-1">Reachable Nodes</p>
                   <p class="text-lg font-semibold">{{ reachableNodes() }}/{{ totalNodes() }}</p>
                 </div>
               </div>
 
               <!-- Nodes Table -->
-              <div class="rounded-lg border">
-                <table class="w-full">
+              <div class="border border-border">
+                <table class="table w-full">
                   <thead>
-                    <tr class="border-b bg-muted/50">
-                      <th class="h-10 px-4 text-left align-middle font-medium text-muted-foreground text-sm">Node</th>
-                      <th class="h-10 px-4 text-left align-middle font-medium text-muted-foreground text-sm">Role</th>
-                      <th class="h-10 px-4 text-left align-middle font-medium text-muted-foreground text-sm">IP Address</th>
-                      <th class="h-10 px-4 text-left align-middle font-medium text-muted-foreground text-sm">State</th>
-                      <th class="h-10 px-4 text-left align-middle font-medium text-muted-foreground text-sm">Reachable</th>
+                    <tr class="border-b border-border bg-bg-tertiary">
+                      <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Node</th>
+                      <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Role</th>
+                      <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Address</th>
+                      <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">State</th>
+                      <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Reachable</th>
                     </tr>
                   </thead>
                   <tbody>
                     @for (node of health()?.nodes || []; track node.name) {
-                      <tr class="border-b last:border-0">
-                        <td class="p-4 font-medium">{{ node.name }}</td>
-                        <td class="p-4">
-                          <span [class]="getRoleClass(node.role)" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium">
+                      <tr class="border-b border-border last:border-0 hover:bg-bg-tertiary transition-colors">
+                        <td class="px-4 py-3 font-medium text-foreground">{{ node.name }}</td>
+                        <td class="px-4 py-3">
+                          <span [class]="getRoleClass(node.role)" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase">
                             {{ node.role || 'unknown' }}
                           </span>
                         </td>
-                        <td class="p-4 font-mono text-sm">{{ node.ip }}</td>
-                        <td class="p-4">
-                          <span [class]="getStateClass(node.state)" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium">
+                        <td class="px-4 py-3 font-mono text-sm text-gray-300">{{ node.ip }}</td>
+                        <td class="px-4 py-3">
+                          <span [class]="getStateClass(node.state)" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase">
                             {{ node.state || 'unknown' }}
                           </span>
                         </td>
-                        <td class="p-4">
+                        <td class="px-4 py-3">
                           @if (node.reachable) {
-                            <span class="text-emerald-500">✓</span>
+                            <span class="text-status-running">✓</span>
                           } @else {
-                            <span class="text-red-500">✗</span>
+                            <span class="text-status-error">✗</span>
                           }
                         </td>
                       </tr>
@@ -161,41 +175,43 @@ interface ProvisioningStep {
                   </tbody>
                 </table>
               </div>
-            </div>
-          } @else {
-            <div class="flex items-center gap-3 text-muted-foreground py-4">
-              <app-spinner size="sm" />
-              <span>Loading health data...</span>
+              </div>
+              } @else {
+                <div class="flex items-center gap-3 text-muted-foreground py-4">
+                  <span class="spinner w-4 h-4"></span>
+                  <span>Loading health data...</span>
+                </div>
+              }
             </div>
           }
-        </app-card>
 
-        <!-- Connection Details (only when running) -->
+          <!-- Connection Details (only when running) -->
         @if (isRunning() && cluster()?.connection) {
-          <app-card title="Connection Details" description="Use these credentials to connect to your database">
+          <div class="card">
+            <div class="card-header">Connection Details</div>
             <div class="space-y-6">
               <!-- Basic connection info (always visible) -->
               <div class="grid gap-4 md:grid-cols-2">
-                <div class="rounded-lg bg-muted/50 p-4">
-                  <p class="text-sm text-muted-foreground mb-1">Host</p>
-                  <p class="font-mono text-sm">{{ cluster()?.connection?.hostname }}</p>
+                <div class="bg-bg-tertiary border border-border p-4">
+                  <p class="text-xs uppercase tracking-wider text-muted-foreground mb-1">Host</p>
+                  <p class="font-mono text-sm text-foreground">{{ cluster()?.connection?.hostname }}</p>
                 </div>
-                <div class="rounded-lg bg-muted/50 p-4">
-                  <p class="text-sm text-muted-foreground mb-1">Ports</p>
-                  <p class="font-mono text-sm">6432 <span class="text-muted-foreground">(pooled)</span> / 5432 <span class="text-muted-foreground">(direct)</span></p>
+                <div class="bg-bg-tertiary border border-border p-4">
+                  <p class="text-xs uppercase tracking-wider text-muted-foreground mb-1">Ports</p>
+                  <p class="font-mono text-sm text-foreground">6432 <span class="text-muted-foreground">(pooled)</span> / 5432 <span class="text-muted-foreground">(direct)</span></p>
                 </div>
               </div>
 
               <!-- Credentials section -->
               @if (!credentials()) {
-                <div class="border-t pt-4">
+                <div class="border-t border-border pt-4">
                   <button
                     (click)="loadCredentials()"
                     [disabled]="credentialsLoading()"
-                    class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2"
+                    class="btn-secondary"
                   >
                     @if (credentialsLoading()) {
-                      <app-spinner size="sm" class="mr-2" />
+                      <span class="spinner w-4 h-4 mr-2"></span>
                       Loading...
                     } @else {
                       <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -208,21 +224,21 @@ interface ProvisioningStep {
                   <p class="text-xs text-muted-foreground mt-2">Click to reveal password and connection strings. Access is logged.</p>
                 </div>
               } @else {
-                <div class="border-t pt-4 space-y-4">
+                <div class="border-t border-border pt-4 space-y-4">
                   <!-- Warning banner -->
-                  <div class="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
+                  <div class="bg-status-warning/10 border border-status-warning p-3">
                     <div class="flex items-start gap-2">
-                      <svg class="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <svg class="w-5 h-5 text-status-warning shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                       </svg>
-                      <p class="text-sm text-amber-800 dark:text-amber-200">{{ credentials()?.warning }}</p>
+                      <p class="text-sm text-status-warning">{{ credentials()?.warning }}</p>
                     </div>
                   </div>
 
                   <!-- Pooled Connection (Recommended) -->
                   <div class="space-y-2">
                     <div class="flex items-center gap-2">
-                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400">
+                      <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-green text-neon-green">
                         Pooled (Recommended)
                       </span>
                       <span class="text-sm text-muted-foreground">Port 6432</span>
@@ -237,7 +253,7 @@ interface ProvisioningStep {
                   <!-- Direct Connection -->
                   <div class="space-y-2">
                     <div class="flex items-center gap-2">
-                      <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                      <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">
                         Direct
                       </span>
                       <span class="text-sm text-muted-foreground">Port 5432</span>
@@ -250,15 +266,15 @@ interface ProvisioningStep {
                   </div>
 
                   <!-- Usage Guide -->
-                  <div class="rounded-lg bg-muted/30 border p-4">
-                    <p class="text-sm font-medium mb-2">When to use each connection</p>
-                    <div class="grid gap-2 text-sm text-muted-foreground">
+                  <div class="bg-bg-tertiary border border-border p-4">
+                    <p class="text-sm font-semibold mb-2 text-foreground">When to use each connection</p>
+                    <div class="grid gap-2 text-sm text-gray-300">
                       <div class="flex items-start gap-2">
-                        <span class="text-emerald-600 dark:text-emerald-400 font-mono shrink-0">6432</span>
+                        <span class="text-neon-green font-mono shrink-0">6432</span>
                         <span>Web apps, APIs, serverless functions, high concurrency workloads</span>
                       </div>
                       <div class="flex items-start gap-2">
-                        <span class="text-blue-600 dark:text-blue-400 font-mono shrink-0">5432</span>
+                        <span class="text-neon-cyan font-mono shrink-0">5432</span>
                         <span>Migrations, LISTEN/NOTIFY, prepared statements, admin tools (pgAdmin, psql)</span>
                       </div>
                     </div>
@@ -267,75 +283,77 @@ interface ProvisioningStep {
                   <!-- Hide credentials button -->
                   <button
                     (click)="hideCredentials()"
-                    class="text-sm text-muted-foreground hover:text-foreground"
+                    class="text-sm text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Hide credentials
                   </button>
                 </div>
               }
             </div>
-          </app-card>
-        }
-
-        <!-- Metrics Card (visible when running) -->
-        @if (isRunning()) {
-          <app-metrics-card
-            [clusterId]="clusterId"
-            [isClusterRunning]="isRunning()"
-          />
-        }
-
-        <!-- Backups Card (visible when running or has backups) -->
-        @if (isRunning()) {
-          <app-backups-card
-            [clusterId]="clusterId"
-            [clusterSlug]="cluster()?.slug || ''"
-            [isClusterRunning]="isRunning()"
-          />
-        }
-
-        <!-- Exports Card (visible when running) -->
-        @if (isRunning()) {
-          <app-exports-card
-            [clusterId]="clusterId"
-            [isClusterRunning]="isRunning()"
-          />
-        }
-
-        <!-- Danger Zone -->
-        <app-card title="Danger Zone" variant="danger">
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="font-medium">Delete this cluster</p>
-              <p class="text-sm text-muted-foreground">Once deleted, this cluster cannot be recovered.</p>
-            </div>
-            <button
-              (click)="showDeleteDialog.set(true)"
-              [disabled]="deleting()"
-              class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-destructive text-destructive-foreground hover:bg-destructive/90 h-10 px-4 py-2"
-            >
-              @if (deleting()) {
-                <app-spinner size="sm" class="mr-2" />
-              }
-              Delete Cluster
-            </button>
           </div>
-        </app-card>
+        }
 
-        <!-- Delete Confirmation Dialog -->
-        <app-confirm-dialog
-          [open]="showDeleteDialog()"
-          title="Delete Cluster"
-          [message]="'Are you sure you want to delete ' + cluster()?.name + '? This action cannot be undone and all data will be permanently lost.'"
-          confirmText="Delete"
-          variant="destructive"
-          (confirm)="deleteCluster()"
-          (cancel)="showDeleteDialog.set(false)"
-        />
+          <!-- Metrics Card (visible when running) -->
+          @if (isRunning()) {
+            <app-metrics-card
+              [clusterId]="clusterId"
+              [isClusterRunning]="isRunning()"
+            />
+          }
+
+          <!-- Backups Card (visible when running or has backups) -->
+          @if (isRunning()) {
+            <app-backups-card
+              [clusterId]="clusterId"
+              [clusterSlug]="cluster()?.slug || ''"
+              [isClusterRunning]="isRunning()"
+            />
+          }
+
+          <!-- Exports Card (visible when running) -->
+          @if (isRunning()) {
+            <app-exports-card
+              [clusterId]="clusterId"
+              [isClusterRunning]="isRunning()"
+            />
+          }
+
+          <!-- Danger Zone -->
+          <div class="card border-status-error/30">
+            <div class="card-header text-status-error">Danger Zone</div>
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="font-semibold text-foreground">Delete this cluster</p>
+                <p class="text-sm text-muted-foreground">Once deleted, this cluster cannot be recovered.</p>
+              </div>
+              <button
+                (click)="showDeleteDialog.set(true)"
+                [disabled]="deleting()"
+                class="btn-danger"
+              >
+                @if (deleting()) {
+                  <span class="spinner w-4 h-4 mr-2 border-status-error"></span>
+                }
+                Delete Cluster
+              </button>
+            </div>
+          </div>
+
+          <!-- Delete Confirmation Dialog -->
+          <app-confirm-dialog
+            [open]="showDeleteDialog()"
+            title="Delete Cluster"
+            [message]="'Are you sure you want to delete ' + cluster()?.name + '? This action cannot be undone and all data will be permanently lost.'"
+            confirmText="Delete"
+            variant="destructive"
+            (confirm)="deleteCluster()"
+            (cancel)="showDeleteDialog.set(false)"
+          />
+        }
       } @else {
         <div class="text-center py-12">
           <p class="text-muted-foreground">Cluster not found</p>
-          <a routerLink="/clusters" class="text-primary hover:underline">Back to Clusters</a>
+          <a routerLink="/" class="text-neon-green hover:underline">Back to Clusters</a>
         </div>
       }
     </div>
@@ -354,6 +372,7 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
 
   clusterId: string = '';
   private pollingSubscription?: Subscription;
+  private routeSubscription?: Subscription;
 
   // Provisioning steps configuration
   readonly provisioningSteps: ProvisioningStep[] = [
@@ -382,6 +401,11 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
     return this.cluster()?.status === 'running';
   });
 
+  isDeleted = computed(() => {
+    const status = this.cluster()?.status;
+    return status === 'deleting' || status === 'deleted';
+  });
+
   currentStep = computed(() => {
     return this.cluster()?.provisioningProgress || 0;
   });
@@ -397,46 +421,59 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
   getHealthStatusClass(status: string | undefined): string {
     switch (status) {
       case 'healthy':
-        return 'bg-emerald-500';
+        return 'bg-status-running';
       case 'degraded':
-        return 'bg-amber-500';
+        return 'bg-status-warning';
       case 'unhealthy':
-        return 'bg-red-500';
+        return 'bg-status-error';
       default:
-        return 'bg-gray-400';
+        return 'bg-status-stopped';
     }
   }
 
   getRoleClass(role: string | null): string {
     switch (role) {
       case 'leader':
-        return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400';
+        return 'border border-neon-green text-neon-green';
       case 'replica':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+        return 'border border-neon-cyan text-neon-cyan';
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400';
+        return 'border border-border text-muted-foreground';
     }
   }
 
   getStateClass(state: string | null): string {
     switch (state) {
       case 'running':
-        return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400';
+        return 'border border-status-running text-status-running';
       case 'streaming':
-        return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+        return 'border border-neon-cyan text-neon-cyan';
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400';
+        return 'border border-border text-muted-foreground';
     }
   }
 
   ngOnInit(): void {
-    this.clusterId = this.route.snapshot.paramMap.get('id') || '';
-    this.loadCluster();
-    this.startPolling();
+    // Subscribe to route parameter changes to handle navigation between clusters
+    this.routeSubscription = this.route.paramMap.subscribe(params => {
+      const newId = params.get('id') || '';
+      if (newId !== this.clusterId) {
+        // Reset state when switching clusters
+        this.pollingSubscription?.unsubscribe();
+        this.clusterId = newId;
+        this.loading.set(true);
+        this.cluster.set(null);
+        this.health.set(null);
+        this.credentials.set(null);
+        this.loadCluster();
+        this.startPolling();
+      }
+    });
   }
 
   ngOnDestroy(): void {
     this.pollingSubscription?.unsubscribe();
+    this.routeSubscription?.unsubscribe();
   }
 
   private loadCluster(): void {

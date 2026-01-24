@@ -9,7 +9,7 @@ import { CopyButtonComponent } from '../copy-button/copy-button.component';
   template: `
     <div class="space-y-2">
       <div class="flex items-center justify-between">
-        <label class="text-sm font-medium text-foreground">{{ label }}</label>
+        <label class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ label }}</label>
         <button
           (click)="toggleMask()"
           class="text-xs text-muted-foreground hover:text-foreground transition-colors"
@@ -18,7 +18,7 @@ import { CopyButtonComponent } from '../copy-button/copy-button.component';
         </button>
       </div>
       <div class="flex items-center gap-2">
-        <div class="flex-1 font-mono text-sm bg-muted px-3 py-2 rounded-md overflow-x-auto whitespace-nowrap">
+        <div class="flex-1 font-mono text-sm bg-bg-tertiary border border-border px-3 py-2 overflow-x-auto whitespace-nowrap text-gray-300">
           @if (masked()) {
             <span>{{ prefix }}</span><span class="password-mask"></span><span>{{ suffix }}</span>
           } @else {
@@ -38,7 +38,6 @@ import { CopyButtonComponent } from '../copy-button/copy-button.component';
       width: 4em;
       height: 0.5em;
       background: currentColor;
-      border-radius: 2px;
       vertical-align: middle;
       margin: 0 1px;
     }

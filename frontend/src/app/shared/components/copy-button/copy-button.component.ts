@@ -12,7 +12,7 @@ import { CommonModule } from '@angular/common';
       [title]="copied() ? 'Copied!' : 'Copy to clipboard'"
     >
       @if (copied()) {
-        <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
         </svg>
       } @else {
@@ -34,12 +34,12 @@ export class CopyButtonComponent {
   copied = signal(false);
 
   get buttonClasses(): string {
-    const base = 'inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50';
+    const base = 'inline-flex items-center justify-center text-sm font-medium transition-colors focus:outline-none disabled:pointer-events-none disabled:opacity-50';
 
     const variants: Record<string, string> = {
-      default: 'bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-3',
-      outline: 'border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3',
-      ghost: 'hover:bg-accent hover:text-accent-foreground h-8 w-8',
+      default: 'bg-neon-green text-bg-primary hover:bg-neon-green/80 h-9 px-3',
+      outline: 'border border-border bg-transparent text-foreground hover:bg-bg-tertiary h-9 px-3',
+      ghost: 'text-muted-foreground hover:text-foreground hover:bg-bg-tertiary h-8 w-8',
     };
 
     return `${base} ${variants[this.variant]}`;

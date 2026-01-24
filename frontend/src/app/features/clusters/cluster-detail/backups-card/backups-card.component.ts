@@ -6,41 +6,31 @@ import { BackupService } from '../../../../core/services/backup.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { Backup, BackupDeletionInfo, BackupStatus, BackupMetrics, BackupStep } from '../../../../core/models';
 import { POLLING_INTERVALS } from '../../../../core/constants';
-import {
-  CardComponent,
-  SpinnerComponent,
-  StatusBadgeComponent,
-  ConfirmDialogComponent
-} from '../../../../shared/components';
-
 @Component({
   selector: 'app-backups-card',
   standalone: true,
   imports: [
     CommonModule,
-    FormsModule,
-    CardComponent,
-    SpinnerComponent,
-    StatusBadgeComponent,
-    ConfirmDialogComponent
+    FormsModule
   ],
   template: `
-    <app-card title="Backups" description="Automated and manual backups with point-in-time recovery">
+    <div class="card">
+      <div class="card-header">Backups</div>
       <div class="space-y-6">
         <!-- Metrics Header -->
         @if (metrics()) {
           <div class="grid grid-cols-3 gap-4">
-            <div class="p-4 rounded-lg bg-muted/50">
-              <div class="text-2xl font-bold">{{ metrics()!.formattedTotalSize }}</div>
-              <div class="text-sm text-muted-foreground">Total Storage</div>
+            <div class="p-4 bg-bg-tertiary border border-border">
+              <div class="text-2xl font-bold text-foreground">{{ metrics()!.formattedTotalSize }}</div>
+              <div class="text-xs uppercase tracking-wider text-muted-foreground">Total Storage</div>
             </div>
-            <div class="p-4 rounded-lg bg-muted/50">
-              <div class="text-2xl font-bold">{{ metrics()!.backupCount }}</div>
-              <div class="text-sm text-muted-foreground">Backups</div>
+            <div class="p-4 bg-bg-tertiary border border-border">
+              <div class="text-2xl font-bold text-foreground">{{ metrics()!.backupCount }}</div>
+              <div class="text-xs uppercase tracking-wider text-muted-foreground">Backups</div>
             </div>
-            <div class="p-4 rounded-lg bg-muted/50">
-              <div class="text-2xl font-bold">{{ pitrWindow() }}</div>
-              <div class="text-sm text-muted-foreground">PITR Available</div>
+            <div class="p-4 bg-bg-tertiary border border-border">
+              <div class="text-2xl font-bold text-foreground">{{ pitrWindow() }}</div>
+              <div class="text-xs uppercase tracking-wider text-muted-foreground">PITR Available</div>
             </div>
           </div>
 
@@ -49,7 +39,7 @@ import {
             <div class="h-24 flex items-end gap-0.5">
               @for (point of metrics()!.storageTrend.slice(-30); track point.date) {
                 <div
-                  class="flex-1 bg-primary/20 hover:bg-primary/40 transition-colors rounded-t min-h-[2px]"
+                  class="flex-1 bg-neon-green/20 hover:bg-neon-green/40 transition-colors min-h-[2px]"
                   [style.height.%]="getBarHeight(point.sizeBytes)"
                   [title]="point.date + ': ' + point.formattedSize"
                 ></div>
@@ -63,7 +53,7 @@ import {
           <select
             [(ngModel)]="selectedBackupType"
             [disabled]="!isClusterRunning || creating()"
-            class="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            class="select h-9 px-3 py-1 text-sm"
           >
             <option value="incr">Incremental</option>
             <option value="diff">Differential</option>
@@ -72,10 +62,10 @@ import {
           <button
             (click)="createBackup()"
             [disabled]="!isClusterRunning || creating()"
-            class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-9 px-4"
+            class="btn-primary h-9 px-4"
           >
             @if (creating()) {
-              <app-spinner size="sm" class="mr-2" />
+              <span class="spinner w-4 h-4 mr-2"></span>
               Creating...
             } @else {
               <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -89,7 +79,7 @@ import {
         <!-- Loading state -->
         @if (loading()) {
           <div class="flex items-center justify-center py-8">
-            <app-spinner size="md" />
+            <span class="spinner w-6 h-6"></span>
           </div>
         } @else if (backups().length === 0) {
           <!-- Empty state -->
@@ -97,29 +87,29 @@ import {
             <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
             </svg>
-            <p class="font-medium">No backups yet</p>
+            <p class="font-semibold text-foreground">No backups yet</p>
             <p class="text-sm mt-1">Create your first backup to enable point-in-time recovery</p>
           </div>
         } @else {
           <!-- Backups list -->
-          <div class="rounded-lg border divide-y">
+          <div class="border border-border divide-y divide-border">
             @for (backup of backups(); track backup.id) {
-              <div class="p-4">
+              <div class="p-4 hover:bg-bg-tertiary transition-colors">
                 <div class="flex items-start justify-between">
                   <div class="flex items-start gap-3">
                     <!-- Status indicator -->
-                    <div [class]="getStatusClasses(backup.status)" class="w-2 h-2 rounded-full mt-2"></div>
+                    <div [class]="getStatusClasses(backup.status)" class="w-2 h-2 mt-2"></div>
 
                     <div class="flex-1">
                       <!-- Header with badges -->
                       <div class="flex items-center gap-2 flex-wrap">
-                        <span class="font-medium">{{ formatBackupType(backup.type) }}</span>
+                        <span class="font-semibold text-foreground">{{ formatBackupType(backup.type) }}</span>
                         @if (backup.backupType) {
-                          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400">
+                          <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">
                             {{ formatPhysicalType(backup.backupType) }}
                           </span>
                         }
-                        <span [class]="getStatusBadgeClasses(backup.status)" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium">
+                        <span [class]="getStatusBadgeClasses(backup.status)" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase">
                           {{ formatStatus(backup.status) }}
                         </span>
                       </div>
@@ -142,7 +132,7 @@ import {
                             {{ getExpiryText(backup.expiresAt) }}
                           } @else if (backup.retentionType === 'manual') {
                             <span class="mx-1">&middot;</span>
-                            <span class="text-emerald-600 dark:text-emerald-400">Never expires</span>
+                            <span class="text-neon-green">Never expires</span>
                           }
                         </div>
                       }
@@ -154,7 +144,7 @@ import {
                             Step: {{ formatStep(backup.currentStep) }}
                           </div>
                           <div
-                            class="w-full bg-muted rounded-full h-1.5"
+                            class="w-full bg-bg-tertiary h-1.5"
                             role="progressbar"
                             [attr.aria-valuenow]="backup.progressPercent || 0"
                             aria-valuemin="0"
@@ -162,7 +152,7 @@ import {
                             [attr.aria-label]="'Backup progress: ' + (backup.progressPercent || 0) + '%'"
                           >
                             <div
-                              class="bg-primary h-1.5 rounded-full transition-all duration-300"
+                              class="bg-neon-green h-1.5 transition-all duration-300"
                               [style.width.%]="backup.progressPercent || 0"
                             ></div>
                           </div>
@@ -171,7 +161,7 @@ import {
 
                       <!-- Error message for failed backups -->
                       @if (backup.status === 'failed' && backup.errorMessage) {
-                        <div class="text-xs text-red-500 mt-1">{{ backup.errorMessage }}</div>
+                        <div class="text-xs text-status-error mt-1">{{ backup.errorMessage }}</div>
                       }
                     </div>
                   </div>
@@ -181,7 +171,7 @@ import {
                     @if (backup.status === 'completed') {
                       <button
                         (click)="openRestoreDialog(backup)"
-                        class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 px-3"
+                        class="btn-secondary h-8 px-3 text-sm"
                       >
                         <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -190,15 +180,15 @@ import {
                       </button>
                     }
                     @if (backup.status === 'in_progress') {
-                      <app-spinner size="sm" />
+                      <span class="spinner w-4 h-4"></span>
                     } @else {
                       <button
                         (click)="confirmDelete(backup)"
                         [disabled]="deleting() === backup.id"
-                        class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 text-muted-foreground hover:text-destructive h-8 w-8"
+                        class="text-muted-foreground hover:text-status-error transition-colors h-8 w-8 flex items-center justify-center disabled:opacity-50"
                       >
                         @if (deleting() === backup.id) {
-                          <app-spinner size="sm" />
+                          <span class="spinner w-4 h-4"></span>
                         } @else {
                           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -217,46 +207,46 @@ import {
       <!-- Delete Confirmation Dialog -->
       @if (showDeleteDialog()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center">
-          <div class="fixed inset-0 bg-black/50" (click)="closeDeleteDialog()"></div>
-          <div class="relative bg-background rounded-lg shadow-lg p-6 w-full max-w-lg mx-4 animate-in fade-in zoom-in-95">
-            <h2 class="text-lg font-semibold mb-4">Delete Backup</h2>
+          <div class="fixed inset-0 bg-black/80" (click)="closeDeleteDialog()"></div>
+          <div class="relative bg-bg-secondary border border-border shadow-lg p-6 w-full max-w-lg mx-4">
+            <h2 class="text-lg font-semibold uppercase tracking-wider text-foreground mb-4">Delete Backup</h2>
 
             @if (loadingDeletionInfo()) {
               <div class="flex items-center justify-center py-8">
-                <app-spinner size="md" />
+                <span class="spinner w-6 h-6"></span>
               </div>
             } @else if (deleteErrorMessage()) {
-              <div class="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4 mb-4">
-                <p class="text-red-800 dark:text-red-200">{{ deleteErrorMessage() }}</p>
+              <div class="bg-status-error/10 border border-status-error p-4 mb-4">
+                <p class="text-status-error">{{ deleteErrorMessage() }}</p>
               </div>
               <div class="flex justify-end">
                 <button
                   (click)="closeDeleteDialog()"
-                  class="inline-flex items-center justify-center rounded-md text-sm font-medium h-10 px-4 py-2 border border-input bg-background hover:bg-accent"
+                  class="btn-secondary"
                 >
                   Close
                 </button>
               </div>
             } @else if (deletionInfo()) {
               @if (deletionInfo()!.requiresConfirmation) {
-                <div class="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 mb-4">
+                <div class="bg-status-warning/10 border border-status-warning p-4 mb-4">
                   <div class="flex items-start gap-3">
-                    <svg class="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg class="w-5 h-5 text-status-warning shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                     <div>
-                      <p class="font-medium text-amber-800 dark:text-amber-200">This will also delete dependent backups</p>
-                      <p class="text-sm text-amber-700 dark:text-amber-300 mt-1">{{ deletionInfo()!.warningMessage }}</p>
+                      <p class="font-semibold text-status-warning">This will also delete dependent backups</p>
+                      <p class="text-sm text-status-warning/80 mt-1">{{ deletionInfo()!.warningMessage }}</p>
                     </div>
                   </div>
                 </div>
 
                 <div class="mb-4">
-                  <p class="text-sm font-medium mb-2">Backups to be deleted:</p>
-                  <div class="rounded-lg border divide-y max-h-48 overflow-y-auto">
-                    <div class="p-3 flex justify-between items-center bg-muted/30">
+                  <p class="text-sm font-semibold text-foreground mb-2">Backups to be deleted:</p>
+                  <div class="border border-border divide-y divide-border max-h-48 overflow-y-auto">
+                    <div class="p-3 flex justify-between items-center bg-bg-tertiary">
                       <div>
-                        <span class="font-medium">{{ formatPhysicalType(deletionInfo()!.backup.backupType) }}</span>
+                        <span class="font-medium text-foreground">{{ formatPhysicalType(deletionInfo()!.backup.backupType) }}</span>
                         <span class="text-muted-foreground text-sm ml-2">(Primary)</span>
                       </div>
                       <span class="text-sm text-muted-foreground">{{ deletionInfo()!.backup.formattedSize }}</span>
@@ -264,7 +254,7 @@ import {
                     @for (dep of deletionInfo()!.dependentBackups; track dep.id) {
                       <div class="p-3 flex justify-between items-center">
                         <div>
-                          <span class="font-medium">{{ formatPhysicalType(dep.backupType) }}</span>
+                          <span class="font-medium text-foreground">{{ formatPhysicalType(dep.backupType) }}</span>
                           <span class="text-muted-foreground text-sm ml-2">{{ formatDate(dep.createdAt) }}</span>
                         </div>
                         <span class="text-sm text-muted-foreground">{{ dep.formattedSize }}</span>
@@ -275,7 +265,7 @@ import {
 
                 <div class="flex justify-between items-center text-sm mb-6">
                   <span class="text-muted-foreground">Total to be deleted:</span>
-                  <span class="font-medium">{{ deletionInfo()!.totalCount }} backup(s) · {{ deletionInfo()!.formattedTotalSize }}</span>
+                  <span class="font-semibold text-foreground">{{ deletionInfo()!.totalCount }} backup(s) · {{ deletionInfo()!.formattedTotalSize }}</span>
                 </div>
               } @else {
                 <p class="text-muted-foreground mb-6">
@@ -287,17 +277,17 @@ import {
               <div class="flex justify-end gap-3">
                 <button
                   (click)="closeDeleteDialog()"
-                  class="inline-flex items-center justify-center rounded-md text-sm font-medium h-10 px-4 py-2 border border-input bg-background hover:bg-accent"
+                  class="btn-secondary"
                 >
                   Cancel
                 </button>
                 <button
                   (click)="deleteBackup()"
                   [disabled]="deleting()"
-                  class="inline-flex items-center justify-center rounded-md text-sm font-medium h-10 px-4 py-2 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                  class="btn-danger"
                 >
                   @if (deleting()) {
-                    <app-spinner size="sm" class="mr-2" />
+                    <span class="spinner w-4 h-4 mr-2 border-status-error"></span>
                     Deleting...
                   } @else {
                     Delete {{ deletionInfo()!.totalCount > 1 ? 'All' : '' }}
@@ -312,18 +302,18 @@ import {
       <!-- Restore Confirmation Dialog -->
       @if (showRestoreDialog()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center">
-          <div class="fixed inset-0 bg-black/50" (click)="closeRestoreDialog()"></div>
-          <div class="relative bg-background rounded-lg shadow-lg p-6 w-full max-w-lg mx-4 animate-in fade-in zoom-in-95">
-            <h2 class="text-lg font-semibold mb-2">Restore from Backup</h2>
+          <div class="fixed inset-0 bg-black/80" (click)="closeRestoreDialog()"></div>
+          <div class="relative bg-bg-secondary border border-border shadow-lg p-6 w-full max-w-lg mx-4">
+            <h2 class="text-lg font-semibold uppercase tracking-wider text-foreground mb-4">Restore from Backup</h2>
 
-            <div class="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4 mb-6">
+            <div class="bg-status-warning/10 border border-status-warning p-4 mb-6">
               <div class="flex items-start gap-3">
-                <svg class="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <svg class="w-5 h-5 text-status-warning shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
                 <div>
-                  <p class="font-medium text-amber-800 dark:text-amber-200">A new cluster will be created</p>
-                  <p class="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                  <p class="font-semibold text-status-warning">A new cluster will be created</p>
+                  <p class="text-sm text-status-warning/80 mt-1">
                     The original cluster will not be modified.
                   </p>
                 </div>
@@ -333,32 +323,32 @@ import {
             <div class="space-y-3 mb-6">
               <div class="flex justify-between text-sm">
                 <span class="text-muted-foreground">New cluster name:</span>
-                <span class="font-mono font-medium">{{ getRestoredClusterName() }}</span>
+                <span class="font-mono font-semibold text-foreground">{{ getRestoredClusterName() }}</span>
               </div>
               <div class="flex justify-between text-sm">
                 <span class="text-muted-foreground">Recovery point:</span>
-                <span class="font-medium">{{ formatDateTime(selectedBackup()?.completedAt || selectedBackup()?.createdAt) }}</span>
+                <span class="font-semibold text-foreground">{{ formatDateTime(selectedBackup()?.completedAt || selectedBackup()?.createdAt) }}</span>
               </div>
               <div class="flex justify-between text-sm">
                 <span class="text-muted-foreground">Source backup:</span>
-                <span class="font-medium">{{ formatBackupType(selectedBackup()?.type!) }} ({{ formatPhysicalType(selectedBackup()?.backupType!) }})</span>
+                <span class="font-semibold text-foreground">{{ formatBackupType(selectedBackup()?.type!) }} ({{ formatPhysicalType(selectedBackup()?.backupType!) }})</span>
               </div>
             </div>
 
             <div class="flex justify-end gap-3">
               <button
                 (click)="closeRestoreDialog()"
-                class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2"
+                class="btn-secondary"
               >
                 Cancel
               </button>
               <button
                 (click)="restoreBackup()"
                 [disabled]="restoring()"
-                class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
+                class="btn-primary"
               >
                 @if (restoring()) {
-                  <app-spinner size="sm" class="mr-2" />
+                  <span class="spinner w-4 h-4 mr-2"></span>
                   Restoring...
                 } @else {
                   Restore
@@ -369,7 +359,7 @@ import {
         </div>
       }
 
-    </app-card>
+    </div>
   `
 })
 export class BackupsCardComponent implements OnInit, OnDestroy {
@@ -681,25 +671,25 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
   getStatusClasses(status: BackupStatus): string {
     switch (status) {
-      case 'completed': return 'bg-emerald-500';
+      case 'completed': return 'bg-status-running';
       case 'in_progress':
-      case 'pending': return 'bg-amber-500 animate-pulse';
-      case 'failed': return 'bg-red-500';
-      default: return 'bg-gray-400';
+      case 'pending': return 'bg-status-warning animate-pulse';
+      case 'failed': return 'bg-status-error';
+      default: return 'bg-status-stopped';
     }
   }
 
   getStatusBadgeClasses(status: BackupStatus): string {
     switch (status) {
       case 'completed':
-        return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400';
+        return 'border border-status-running text-status-running';
       case 'in_progress':
       case 'pending':
-        return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400';
+        return 'border border-status-warning text-status-warning';
       case 'failed':
-        return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
+        return 'border border-status-error text-status-error';
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400';
+        return 'border border-status-stopped text-status-stopped';
     }
   }
 }

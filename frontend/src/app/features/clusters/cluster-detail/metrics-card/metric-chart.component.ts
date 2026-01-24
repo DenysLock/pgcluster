@@ -17,11 +17,11 @@ import { MetricSeries } from '../../../../core/models';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="rounded-lg border bg-card p-4">
+    <div class="border border-border bg-bg-secondary p-4">
       <div class="flex items-center justify-between mb-3">
-        <h4 class="text-sm font-medium text-foreground">{{ title }}</h4>
+        <h4 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ title }}</h4>
         @if (currentValue !== null) {
-          <span class="text-lg font-semibold tabular-nums">
+          <span class="text-lg font-semibold tabular-nums text-foreground">
             {{ formatValue(currentValue) }}{{ unit ? ' ' + unit : '' }}
           </span>
         }
@@ -33,13 +33,13 @@ import { MetricSeries } from '../../../../core/models';
           @for (s of sortedSeries; track s.nodeName; let i = $index) {
             <div class="flex items-center gap-1.5">
               <span
-                class="w-2 h-2 rounded-full"
+                class="w-2 h-2"
                 [style.background-color]="getSeriesColor(i)"
               ></span>
               <span class="text-muted-foreground">
                 {{ s.nodeName }}
                 @if (s.nodeRole === 'leader') {
-                  <span class="text-emerald-500">(L)</span>
+                  <span class="text-neon-green">(L)</span>
                 }
               </span>
             </div>
@@ -77,11 +77,11 @@ export class MetricChartComponent implements AfterViewInit, OnChanges, OnDestroy
   sortedSeries: MetricSeries[] = [];
 
   private readonly colors = [
-    '#10b981', // emerald-500 (leader)
-    '#3b82f6', // blue-500 (replica 1)
-    '#8b5cf6', // violet-500 (replica 2)
-    '#f59e0b', // amber-500
-    '#ef4444', // red-500
+    '#00ff00', // neon-green (leader)
+    '#00aaff', // neon-cyan (replica 1)
+    '#aa00ff', // neon-purple (replica 2)
+    '#ffaa00', // status-warning
+    '#ff3333', // status-error
   ];
 
   ngAfterViewInit(): void {
@@ -111,11 +111,11 @@ export class MetricChartComponent implements AfterViewInit, OnChanges, OnDestroy
       height: 160,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#71717a', // zinc-500
+        textColor: '#666666', // muted-foreground
       },
       grid: {
         vertLines: { visible: false },
-        horzLines: { color: '#27272a33' }, // zinc-800 with opacity
+        horzLines: { color: '#22222233' }, // border with opacity
       },
       rightPriceScale: {
         borderVisible: false,
