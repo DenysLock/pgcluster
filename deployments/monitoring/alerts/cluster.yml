@@ -1,0 +1,38 @@
+groups:
+  - name: cluster_alerts
+    rules:
+      - alert: ClusterDown
+        expr: up{job=~"customer-.*"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cluster node is down"
+          description: "Node {{ $labels.instance }} in cluster {{ $labels.cluster_id }} has been down for more than 2 minutes."
+
+      - alert: PatroniLeaderMissing
+        expr: sum by (cluster_id) (patroni_leader) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No Patroni leader"
+          description: "Cluster {{ $labels.cluster_id }} has no Patroni leader for more than 1 minute."
+
+      - alert: ReplicationLagHigh
+        expr: pg_replication_lag > 1048576
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL replication lag is high"
+          description: "Replication lag on {{ $labels.instance }} is {{ $value }} bytes, exceeding 1MB for 5 minutes."
+
+      - alert: ClusterDegraded
+        expr: count by (cluster_id) (up{job="customer-node"} == 1) < 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cluster is degraded"
+          description: "Cluster {{ $labels.cluster_id }} has fewer than 3 healthy nodes."

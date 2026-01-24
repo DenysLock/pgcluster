@@ -1,43 +1,49 @@
 package com.pgcluster.api.client;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.pgcluster.api.util.NetworkUtils;
 import lombok.Data;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.*;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.web.client.RestClient;
 
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Client for querying Prometheus metrics API.
+ * <p>
+ * Note: PromQL queries contain curly braces {} which Spring's URI builders interpret
+ * as template variables. We use manual URL encoding to handle this correctly.
+ */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class PrometheusClient {
 
     @Value("${prometheus.url:http://localhost:9090}")
     private String prometheusUrl;
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestClient restClient = RestClient.create();
 
     /**
      * Execute an instant query against Prometheus
      */
     public QueryResponse query(String promQL) {
         try {
-            String url = UriComponentsBuilder.fromHttpUrl(prometheusUrl)
-                    .path("/api/v1/query")
-                    .queryParam("query", promQL)
-                    .toUriString();
+            URI uri = buildPrometheusUri("/api/v1/query", "query", promQL);
 
-            ResponseEntity<QueryResponse> response = restTemplate.getForEntity(url, QueryResponse.class);
+            QueryResponse response = restClient.get()
+                    .uri(uri)
+                    .retrieve()
+                    .body(QueryResponse.class);
 
-            if (response.getBody() != null && "success".equals(response.getBody().getStatus())) {
-                return response.getBody();
+            if (response != null && "success".equals(response.getStatus())) {
+                return response;
             }
 
             log.warn("Prometheus query failed: {}", promQL);
@@ -83,7 +89,7 @@ public class PrometheusClient {
             nodes.add(NodeHealth.builder()
                     .nodeName(metric.getOrDefault("node_name", "unknown"))
                     .nodeRole(metric.getOrDefault("node_role", "unknown"))
-                    .ip(extractIp(metric.getOrDefault("instance", "")))
+                    .ip(NetworkUtils.extractIp(metric.getOrDefault("instance", "")))
                     .status(status)
                     .build());
         }
@@ -96,23 +102,14 @@ public class PrometheusClient {
      */
     public boolean isHealthy() {
         try {
-            String url = prometheusUrl + "/-/healthy";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            return response.getStatusCode() == HttpStatus.OK;
+            restClient.get()
+                    .uri(prometheusUrl + "/-/healthy")
+                    .retrieve()
+                    .toBodilessEntity();
+            return true;
         } catch (Exception e) {
             return false;
         }
-    }
-
-    /**
-     * Extract IP from instance label (e.g., "1.2.3.4:8008" -> "1.2.3.4")
-     */
-    private String extractIp(String instance) {
-        int colonIndex = instance.indexOf(':');
-        if (colonIndex > 0) {
-            return instance.substring(0, colonIndex);
-        }
-        return instance;
     }
 
     /**
@@ -161,5 +158,94 @@ public class PrometheusClient {
         private String nodeRole;
         private String ip;
         private String status; // "running" or "down"
+    }
+
+    // ============ Range Query Support ============
+
+    /**
+     * Execute a range query against Prometheus for time-series data
+     *
+     * @param promQL The PromQL query
+     * @param start  Start timestamp (Unix epoch seconds)
+     * @param end    End timestamp (Unix epoch seconds)
+     * @param step   Step duration (e.g., "15s", "1m", "5m")
+     * @return RangeQueryResponse or null if query fails
+     */
+    public RangeQueryResponse queryRange(String promQL, long start, long end, String step) {
+        try {
+            log.debug("Prometheus range query: {}", promQL);
+
+            URI uri = buildPrometheusUri("/api/v1/query_range",
+                    "query", promQL,
+                    "start", String.valueOf(start),
+                    "end", String.valueOf(end),
+                    "step", step);
+
+            RangeQueryResponse response = restClient.get()
+                    .uri(uri)
+                    .retrieve()
+                    .body(RangeQueryResponse.class);
+
+            if (response != null && "success".equals(response.getStatus())) {
+                return response;
+            }
+
+            log.warn("Prometheus range query failed: {} - {}", promQL,
+                    response != null ? response.getError() : "null response");
+            return null;
+
+        } catch (Exception e) {
+            log.error("Failed to execute Prometheus range query: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Build a properly encoded URI for Prometheus API calls.
+     * <p>
+     * PromQL queries contain {} which Spring's UriBuilder interprets as template variables.
+     * This method manually encodes the query to avoid that issue.
+     *
+     * @param path   API path (e.g., "/api/v1/query")
+     * @param params Key-value pairs of query parameters
+     * @return Properly encoded URI
+     */
+    private URI buildPrometheusUri(String path, String... params) throws Exception {
+        StringBuilder query = new StringBuilder();
+        for (int i = 0; i < params.length; i += 2) {
+            if (i > 0) query.append("&");
+            query.append(params[i])
+                    .append("=")
+                    .append(URLEncoder.encode(params[i + 1], StandardCharsets.UTF_8));
+        }
+        return new URI(prometheusUrl + path + "?" + query);
+    }
+
+    /**
+     * Get the escaped label value for PromQL queries (exposed for external use)
+     */
+    public String escapeLabel(String value) {
+        return escapePromQLLabelValue(value);
+    }
+
+    @Data
+    public static class RangeQueryResponse {
+        private String status;
+        private RangeQueryData data;
+        private String errorType;
+        private String error;
+    }
+
+    @Data
+    public static class RangeQueryData {
+        @JsonProperty("resultType")
+        private String resultType; // "matrix" for range queries
+        private List<RangeQueryResult> result;
+    }
+
+    @Data
+    public static class RangeQueryResult {
+        private Map<String, String> metric;
+        private List<List<Object>> values; // [[timestamp, value], [timestamp, value], ...]
     }
 }

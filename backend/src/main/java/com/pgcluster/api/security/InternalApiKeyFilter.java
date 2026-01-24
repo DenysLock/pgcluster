@@ -51,14 +51,14 @@ public class InternalApiKeyFilter extends OncePerRequestFilter {
 
         // Only apply to internal endpoints
         if (requestUri.startsWith("/internal/")) {
-            String providedKey = request.getHeader(API_KEY_HEADER);
+            String providedKey = extractApiKey(request);
 
             if (providedKey == null || providedKey.isBlank()) {
                 log.warn("Missing API key for internal endpoint: {} from IP: {}",
                         requestUri, request.getRemoteAddr());
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json");
-                response.getWriter().write("{\"error\":\"Missing X-Internal-Api-Key header\"}");
+                response.getWriter().write("{\"error\":\"Missing API key. Use X-Internal-Api-Key header or Authorization: Bearer\"}");
                 return;
             }
 
@@ -75,5 +75,26 @@ public class InternalApiKeyFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Extract API key from request headers.
+     * Supports both X-Internal-Api-Key header and Authorization: Bearer format.
+     * This allows Prometheus http_sd_configs to authenticate using standard Bearer auth.
+     */
+    private String extractApiKey(HttpServletRequest request) {
+        // First, check X-Internal-Api-Key header
+        String apiKey = request.getHeader(API_KEY_HEADER);
+        if (apiKey != null && !apiKey.isBlank()) {
+            return apiKey;
+        }
+
+        // Fall back to Authorization: Bearer header (used by Prometheus)
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            return authHeader.substring(7);
+        }
+
+        return null;
     }
 }

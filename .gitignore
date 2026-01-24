@@ -30,8 +30,6 @@ Thumbs.db
 test-output/
 coverage/
 
-deployments/
-
 *.pem
 *.key
 

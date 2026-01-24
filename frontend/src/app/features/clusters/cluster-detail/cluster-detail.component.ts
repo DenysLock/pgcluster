@@ -15,6 +15,7 @@ import {
 } from '../../../shared/components';
 import { BackupsCardComponent } from './backups-card/backups-card.component';
 import { ExportsCardComponent } from './exports-card/exports-card.component';
+import { MetricsCardComponent } from './metrics-card/metrics-card.component';
 
 interface ProvisioningStep {
   id: number;
@@ -34,7 +35,8 @@ interface ProvisioningStep {
     ConfirmDialogComponent,
     CardComponent,
     BackupsCardComponent,
-    ExportsCardComponent
+    ExportsCardComponent,
+    MetricsCardComponent
   ],
   template: `
     <div class="space-y-6">
@@ -273,6 +275,14 @@ interface ProvisioningStep {
               }
             </div>
           </app-card>
+        }
+
+        <!-- Metrics Card (visible when running) -->
+        @if (isRunning()) {
+          <app-metrics-card
+            [clusterId]="clusterId"
+            [isClusterRunning]="isRunning()"
+          />
         }
 
         <!-- Backups Card (visible when running or has backups) -->

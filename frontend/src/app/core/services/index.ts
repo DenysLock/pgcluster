@@ -6,3 +6,4 @@ export * from './backup.service';
 export * from './notification.service';
 export * from './date-formatting.service';
 export * from './status-class.service';
+export * from './metrics.service';

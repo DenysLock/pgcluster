@@ -1,0 +1,143 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+rule_files:
+  - /etc/prometheus/alerts/*.yml
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Control Plane API metrics
+  - job_name: 'dbaas-api'
+    metrics_path: '/internal/prometheus'
+    authorization:
+      type: 'Bearer'
+      credentials_file: '/etc/prometheus/api-key'
+    static_configs:
+      - targets:
+          - 'CP1_IP:8080'
+          - 'CP2_IP:8080'
+          - 'CP3_IP:8080'
+        labels:
+          env: 'production'
+          component: 'api'
+
+  # Control Plane Node metrics (CPU, memory, disk)
+  - job_name: 'node'
+    static_configs:
+      - targets:
+          - 'CP1_IP:9100'
+          - 'CP2_IP:9100'
+          - 'CP3_IP:9100'
+        labels:
+          env: 'production'
+          component: 'control-plane'
+
+  # Control Plane PostgreSQL metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets:
+          - 'CP1_IP:9187'
+          - 'CP2_IP:9187'
+          - 'CP3_IP:9187'
+        labels:
+          env: 'production'
+          component: 'control-plane'
+
+  # Patroni metrics (cluster health)
+  - job_name: 'patroni'
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 'CP1_IP:8008'
+          - 'CP2_IP:8008'
+          - 'CP3_IP:8008'
+        labels:
+          env: 'production'
+          component: 'control-plane'
+
+  # etcd metrics
+  - job_name: 'etcd'
+    static_configs:
+      - targets:
+          - 'CP1_IP:2379'
+          - 'CP2_IP:2379'
+          - 'CP3_IP:2379'
+        labels:
+          env: 'production'
+          component: 'control-plane'
+
+  # Customer clusters (dynamic discovery via API)
+  - job_name: 'customer-node'
+    http_sd_configs:
+      - url: 'http://CP1_IP:8080/internal/prometheus-targets'
+        refresh_interval: 30s
+        authorization:
+          type: 'Bearer'
+          credentials_file: '/etc/prometheus/api-key'
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.+):9100'
+        target_label: __address__
+        replacement: '${1}:9100'
+      - source_labels: [__address__]
+        regex: '(.+):9100'
+        action: keep
+
+  - job_name: 'customer-postgres'
+    http_sd_configs:
+      - url: 'http://CP1_IP:8080/internal/prometheus-targets'
+        refresh_interval: 30s
+        authorization:
+          type: 'Bearer'
+          credentials_file: '/etc/prometheus/api-key'
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.+):9187'
+        target_label: __address__
+        replacement: '${1}:9187'
+      - source_labels: [__address__]
+        regex: '(.+):9187'
+        action: keep
+
+  - job_name: 'customer-patroni'
+    http_sd_configs:
+      - url: 'http://CP1_IP:8080/internal/prometheus-targets'
+        refresh_interval: 30s
+        authorization:
+          type: 'Bearer'
+          credentials_file: '/etc/prometheus/api-key'
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.+):8008'
+        target_label: __address__
+        replacement: '${1}:8008'
+      - source_labels: [__address__]
+        regex: '(.+):8008'
+        action: keep
+
+  - job_name: 'customer-pgbouncer'
+    http_sd_configs:
+      - url: 'http://CP1_IP:8080/internal/prometheus-targets'
+        refresh_interval: 30s
+        authorization:
+          type: 'Bearer'
+          credentials_file: '/etc/prometheus/api-key'
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.+):9127'
+        target_label: __address__
+        replacement: '${1}:9127'
+      - source_labels: [__address__]
+        regex: '(.+):9127'
+        action: keep
