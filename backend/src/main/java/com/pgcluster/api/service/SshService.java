@@ -11,6 +11,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+/**
+ * Service for executing SSH commands on remote hosts.
+ * Provides methods for command execution, file upload, and session management
+ * with configurable timeouts and automatic retry for transient failures.
+ */
 @Slf4j
 @Service
 public class SshService {
@@ -21,26 +26,103 @@ public class SshService {
     @Value("${ssh.private-key-path:/home/appuser/.ssh/id_rsa}")
     private String privateKeyPath;
 
+    @Value("${ssh.timeout-ms:30000}")
+    private int defaultTimeoutMs;
+
+    @Value("${ssh.retry.max-attempts:3}")
+    private int maxRetryAttempts;
+
+    @Value("${ssh.retry.delay-ms:2000}")
+    private int retryDelayMs;
+
     private final HostKeyVerifier hostKeyVerifier;
 
     private static final int SSH_PORT = 22;
-    private static final int TIMEOUT_MS = 30000;
 
     public SshService(HostKeyVerifier hostKeyVerifier) {
         this.hostKeyVerifier = hostKeyVerifier;
     }
 
     /**
-     * Execute a command on a remote host
+     * Execute a command on a remote host using default timeout from configuration
      */
     public CommandResult executeCommand(String host, String command) {
-        return executeCommand(host, command, TIMEOUT_MS);
+        return executeCommand(host, command, defaultTimeoutMs);
     }
 
     /**
      * Execute a command with custom timeout
      */
     public CommandResult executeCommand(String host, String command, int timeoutMs) {
+        return executeCommandInternal(host, command, timeoutMs);
+    }
+
+    /**
+     * Execute a command with automatic retry for transient failures.
+     * Use this for critical operations where temporary network issues should be tolerated.
+     */
+    public CommandResult executeCommandWithRetry(String host, String command) {
+        return executeCommandWithRetry(host, command, defaultTimeoutMs);
+    }
+
+    /**
+     * Execute a command with custom timeout and automatic retry for transient failures.
+     */
+    public CommandResult executeCommandWithRetry(String host, String command, int timeoutMs) {
+        for (int attempt = 1; attempt <= maxRetryAttempts; attempt++) {
+            CommandResult result = executeCommandInternal(host, command, timeoutMs);
+
+            // If command executed (even with non-zero exit code), return the result
+            if (result.getExitCode() != -1) {
+                return result;
+            }
+
+            // Check if the error is transient and retriable
+            if (!isTransientError(result.getStderr())) {
+                log.debug("Non-transient SSH error on {}: {}", host, result.getStderr());
+                return result;
+            }
+
+            log.warn("Transient SSH error on {} (attempt {}/{}): {}",
+                    host, attempt, maxRetryAttempts, result.getStderr());
+
+            if (attempt < maxRetryAttempts) {
+                try {
+                    Thread.sleep(retryDelayMs * attempt); // Exponential backoff
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return new CommandResult(-1, "", "Interrupted during retry");
+                }
+            }
+        }
+
+        log.error("SSH command failed after {} attempts on {}", maxRetryAttempts, host);
+        return new CommandResult(-1, "", "Failed after " + maxRetryAttempts + " attempts");
+    }
+
+    /**
+     * Check if an error is transient and should be retried.
+     */
+    private boolean isTransientError(String errorMessage) {
+        if (errorMessage == null) {
+            return false;
+        }
+        String lowerError = errorMessage.toLowerCase();
+        return lowerError.contains("connection refused") ||
+               lowerError.contains("connection reset") ||
+               lowerError.contains("connection timed out") ||
+               lowerError.contains("timeout") ||
+               lowerError.contains("no route to host") ||
+               lowerError.contains("network is unreachable") ||
+               lowerError.contains("temporarily unavailable") ||
+               lowerError.contains("socket exception") ||
+               lowerError.contains("broken pipe");
+    }
+
+    /**
+     * Internal method to execute SSH command without retry logic.
+     */
+    private CommandResult executeCommandInternal(String host, String command, int timeoutMs) {
         Session session = null;
         ChannelExec channel = null;
 
@@ -128,10 +210,10 @@ public class SshService {
 
         try {
             session = createSession(host);
-            session.connect(TIMEOUT_MS);
+            session.connect(defaultTimeoutMs);
 
             channel = (ChannelSftp) session.openChannel("sftp");
-            channel.connect(TIMEOUT_MS);
+            channel.connect(defaultTimeoutMs);
 
             try (InputStream is = Files.newInputStream(Path.of(localPath))) {
                 channel.put(is, remotePath);
@@ -154,10 +236,10 @@ public class SshService {
 
         try {
             session = createSession(host);
-            session.connect(TIMEOUT_MS);
+            session.connect(defaultTimeoutMs);
 
             channel = (ChannelSftp) session.openChannel("sftp");
-            channel.connect(TIMEOUT_MS);
+            channel.connect(defaultTimeoutMs);
 
             // Create parent directory if needed
             String parentDir = remotePath.substring(0, remotePath.lastIndexOf('/'));
@@ -168,7 +250,7 @@ public class SshService {
                 executeCommand(host, "mkdir -p " + parentDir);
                 channel.disconnect();
                 channel = (ChannelSftp) session.openChannel("sftp");
-                channel.connect(TIMEOUT_MS);
+                channel.connect(defaultTimeoutMs);
             }
 
             try (InputStream is = new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8))) {

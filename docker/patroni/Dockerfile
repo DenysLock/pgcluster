@@ -1,6 +1,6 @@
 FROM postgres:16-bookworm
 
-# Install Patroni and dependencies
+# Install Patroni, pgBackRest, and dependencies
 RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
@@ -10,10 +10,16 @@ RUN apt-get update && apt-get install -y \
     curl \
     jq \
     iproute2 \
+    pgbackrest \
     && pip3 install --break-system-packages \
         patroni[etcd3]==4.0.4 \
         python-etcd \
     && rm -rf /var/lib/apt/lists/*
+
+# Create pgBackRest directories
+RUN mkdir -p /etc/pgbackrest /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest \
+    && chown -R postgres:postgres /etc/pgbackrest /var/lib/pgbackrest /var/log/pgbackrest /var/spool/pgbackrest \
+    && chmod 750 /etc/pgbackrest
 
 # Create patroni user and directories
 RUN mkdir -p /etc/patroni /var/lib/postgresql/data \

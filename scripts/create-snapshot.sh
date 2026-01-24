@@ -180,9 +180,22 @@ else
     ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$SSH_KEY_PATH" root@"$SERVER_IP" << 'CUSTOMER_SCRIPT'
 set -e
 
-echo "=== Installing tools ==="
+echo "=== Adding PostgreSQL APT repository ==="
+# Use modern keyring approach instead of deprecated apt-key
+mkdir -p /etc/apt/keyrings
+wget --quiet -O /etc/apt/keyrings/postgresql.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+echo "deb [signed-by=/etc/apt/keyrings/postgresql.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list
+
+echo "=== Installing tools and pgBackRest ==="
 apt-get update
-apt-get install -y jq curl
+apt-get install -y jq curl pgbackrest
+
+echo "=== Creating pgBackRest directories ==="
+mkdir -p /etc/pgbackrest
+mkdir -p /var/lib/pgbackrest
+mkdir -p /var/log/pgbackrest
+mkdir -p /var/spool/pgbackrest
+chmod 750 /etc/pgbackrest
 CUSTOMER_SCRIPT
 fi
 
@@ -318,6 +331,7 @@ else
     echo "This snapshot includes:"
     echo "  - Docker"
     echo "  - etcd, Patroni, node-exporter, postgres-exporter images"
+    echo "  - pgBackRest (backup tool)"
     echo "  - /data/postgresql, /data/etcd directories"
     echo ""
     echo "Add to your .env file:"

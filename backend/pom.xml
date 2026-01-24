@@ -93,6 +93,13 @@
             <version>0.2.20</version>
         </dependency>
 
+        <!-- AWS S3 SDK for backups -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.25.0</version>
+        </dependency>
+
         <!-- Resilience4j for circuit breakers and retry -->
         <dependency>
             <groupId>io.github.resilience4j</groupId>

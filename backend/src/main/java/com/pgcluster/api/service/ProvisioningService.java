@@ -2,10 +2,14 @@ package com.pgcluster.api.service;
 
 import com.pgcluster.api.client.CloudflareClient;
 import com.pgcluster.api.client.HetznerClient;
+import com.pgcluster.api.model.entity.Backup;
 import com.pgcluster.api.model.entity.Cluster;
+import com.pgcluster.api.model.entity.RestoreJob;
 import com.pgcluster.api.model.entity.VpsNode;
 import com.pgcluster.api.repository.ClusterRepository;
+import com.pgcluster.api.repository.RestoreJobRepository;
 import com.pgcluster.api.repository.VpsNodeRepository;
+import com.pgcluster.api.util.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,10 +19,16 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
+/**
+ * Service for provisioning and managing VPS infrastructure.
+ * Handles server creation on Hetzner Cloud, DNS management via Cloudflare,
+ * container deployment, and cluster configuration including Patroni, etcd,
+ * PgBouncer, and pgBackRest setup.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -29,11 +39,31 @@ public class ProvisioningService {
     private final SshService sshService;
     private final ClusterRepository clusterRepository;
     private final VpsNodeRepository vpsNodeRepository;
+    private final RestoreJobRepository restoreJobRepository;
+    private final PgBackRestService pgBackRestService;
+    private final HostKeyVerifier hostKeyVerifier;
+    private final PatroniService patroniService;
 
     @Value("${cluster.base-domain}")
     private String baseDomain;
 
-    private static final SecureRandom RANDOM = new SecureRandom();
+    @Value("${s3.endpoint:}")
+    private String s3Endpoint;
+
+    @Value("${s3.access-key:}")
+    private String s3AccessKey;
+
+    @Value("${s3.secret-key:}")
+    private String s3SecretKey;
+
+    @Value("${s3.bucket:pgcluster-backups}")
+    private String s3Bucket;
+
+    @Value("${backup.enabled:false}")
+    private boolean backupEnabled;
+
+    @Value("${restore.timeout-minutes:30}")
+    private int restoreTimeoutMinutes;
 
     /**
      * Provision a cluster asynchronously
@@ -58,12 +88,17 @@ public class ProvisioningService {
         updateClusterStatus(cluster.getId(), Cluster.STATUS_CREATING, null);
 
         // Generate passwords
-        String replicatorPassword = generatePassword(24);
+        String replicatorPassword = PasswordGenerator.generate(24);
 
         // Phase 1: Create VPS nodes with snapshot
         log.info("Phase 1: Creating VPS nodes...");
         updateClusterProgress(cluster.getId(), Cluster.STEP_CREATING_SERVERS, 1);
         List<VpsNode> nodes = createVpsNodes(cluster);
+
+        // Clear any stale SSH host keys for these IPs (handles IP recycling)
+        for (VpsNode node : nodes) {
+            sshService.removeHostKeyTrust(node.getPublicIp());
+        }
 
         // Phase 2: Wait for SSH to be available
         log.info("Phase 2: Waiting for SSH on all nodes...");
@@ -109,10 +144,31 @@ public class ProvisioningService {
         updateClusterProgress(cluster.getId(), Cluster.STEP_ELECTING_LEADER, 5);
         waitForPatroniCluster(nodes, cluster.getSlug());
 
+        // Phase 5b: Initialize pgBackRest if backup is enabled
+        if (backupEnabled && s3Endpoint != null && !s3Endpoint.isBlank()) {
+            log.info("Phase 5b: Initializing pgBackRest...");
+            VpsNode leaderNode = nodes.stream()
+                    .filter(patroniService::isLeaderNode)
+                    .findFirst()
+                    .orElse(nodes.get(0));
+            try {
+                // Apply archive settings via Patroni API
+                applyArchiveSettings(leaderNode, cluster.getSlug());
+                log.info("Archive settings applied for cluster {}", cluster.getSlug());
+
+                // Create pgBackRest stanza
+                pgBackRestService.createStanza(cluster, leaderNode);
+                log.info("pgBackRest stanza initialized for cluster {}", cluster.getSlug());
+            } catch (Exception e) {
+                log.warn("Failed to initialize pgBackRest (non-critical): {}", e.getMessage());
+                // Non-critical error - cluster can still run without backups
+            }
+        }
+
         // Phase 6: Create DNS record pointing to leader
         log.info("Phase 6: Creating DNS record...");
         updateClusterProgress(cluster.getId(), Cluster.STEP_CREATING_DNS, 6);
-        String leaderIp = findLeaderIp(nodes);
+        String leaderIp = patroniService.findLeaderIp(nodes);
         createDnsRecord(cluster.getSlug(), leaderIp);
 
         // Update cluster status
@@ -169,6 +225,9 @@ public class ProvisioningService {
 
                 nodes.add(node);
 
+                // Clear any cached SSH host key for this IP (IPs can be recycled)
+                hostKeyVerifier.removeHost(node.getPublicIp());
+
                 log.info("Created node {} with IP {}", nodeName, node.getPublicIp());
 
             } catch (Exception e) {
@@ -176,6 +235,24 @@ public class ProvisioningService {
                 node.setStatus(VpsNode.STATUS_ERROR);
                 node.setErrorMessage(e.getMessage());
                 vpsNodeRepository.save(node);
+
+                // Rollback: delete previously created nodes
+                if (!nodes.isEmpty()) {
+                    log.warn("Rolling back {} previously created nodes due to failure", nodes.size());
+                    for (VpsNode createdNode : nodes) {
+                        try {
+                            if (createdNode.getHetznerId() != null) {
+                                hetznerClient.deleteServer(createdNode.getHetznerId());
+                                log.info("Rolled back node: {}", createdNode.getName());
+                            }
+                            createdNode.setStatus(VpsNode.STATUS_ERROR);
+                            createdNode.setErrorMessage("Rolled back due to cluster creation failure");
+                            vpsNodeRepository.save(createdNode);
+                        } catch (Exception rollbackEx) {
+                            log.error("Failed to rollback node {}: {}", createdNode.getName(), rollbackEx.getMessage());
+                        }
+                    }
+                }
                 throw e;
             }
         }
@@ -220,6 +297,7 @@ public class ProvisioningService {
 
         // Generate patroni.yml
         String patroniYml = generatePatroniConfig(
+                cluster.getId().toString(),
                 cluster.getSlug(),
                 node.getName(),
                 node.getPublicIp(),
@@ -291,11 +369,16 @@ public class ProvisioningService {
                 "/opt/pgcluster/userlist.txt"
         );
 
-        // Set restrictive permissions on userlist.txt (contains password hash)
+        // Set readable permissions on userlist.txt (contains MD5 hash, read by pgbouncer user)
         sshService.executeCommand(
                 node.getPublicIp(),
-                "chmod 600 /opt/pgcluster/userlist.txt"
+                "chmod 644 /opt/pgcluster/userlist.txt"
         );
+
+        // Upload pgBackRest config if backup is enabled
+        if (backupEnabled && s3Endpoint != null && !s3Endpoint.isBlank()) {
+            pgBackRestService.uploadConfig(cluster, node);
+        }
 
         log.info("Node {} config uploaded with secure permissions", node.getName());
     }
@@ -386,6 +469,47 @@ public class ProvisioningService {
     }
 
     /**
+     * Start core containers for restore (patroni and node-exporter only, without dependent services).
+     * This avoids health check timeout issues during restore.
+     */
+    private void startCoreContainersForRestore(VpsNode node) {
+        log.info("Starting core containers (patroni, node-exporter) on {} for restore...", node.getName());
+
+        SshService.CommandResult result = sshService.executeCommand(
+                node.getPublicIp(),
+                "cd /opt/pgcluster && docker compose up -d patroni node-exporter",
+                300000  // 5 minutes timeout for container pull/start
+        );
+
+        if (!result.isSuccess()) {
+            log.error("Failed to start core containers on {}: {}", node.getName(), result.getStderr());
+            throw new RuntimeException("Failed to start core containers on " + node.getName());
+        }
+
+        log.info("Core containers started on {}", node.getName());
+    }
+
+    /**
+     * Start dependent containers (pgbouncer, postgres-exporter) after patroni is healthy.
+     */
+    private void startDependentContainers(VpsNode node) {
+        log.info("Starting dependent containers on {}...", node.getName());
+
+        SshService.CommandResult result = sshService.executeCommand(
+                node.getPublicIp(),
+                "cd /opt/pgcluster && docker compose up -d pgbouncer postgres-exporter",
+                60000  // 1 minute timeout
+        );
+
+        if (!result.isSuccess()) {
+            log.error("Failed to start dependent containers on {}: {}", node.getName(), result.getStderr());
+            throw new RuntimeException("Failed to start dependent containers on " + node.getName());
+        }
+
+        log.info("Dependent containers started on {}", node.getName());
+    }
+
+    /**
      * Generate docker-compose.yml from template.
      * Passwords are loaded from .env file for security.
      */
@@ -427,6 +551,9 @@ public class ProvisioningService {
                 volumes:
                   - /data/postgresql:/var/lib/postgresql/data
                   - /opt/pgcluster/patroni.yml:/etc/patroni/patroni.yml:ro
+                  - /etc/pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+                  - /var/log/pgbackrest:/var/log/pgbackrest
+                  - /var/spool/pgbackrest:/var/spool/pgbackrest
                 environment:
                   - PATRONI_NAME=%s
                   - PATRONI_RESTAPI_CONNECT_ADDRESS=%s:8008
@@ -497,14 +624,31 @@ public class ProvisioningService {
     /**
      * Generate patroni.yml configuration
      */
-    private String generatePatroniConfig(String clusterSlug, String nodeName,
+    private String generatePatroniConfig(String clusterId, String clusterSlug, String nodeName,
                                          String nodeIp, String etcdHosts,
                                          String postgresPassword, String replicatorPassword,
                                          String nodeSize) {
         // Calculate memory settings based on node size
         MemorySettings mem = getMemorySettings(nodeSize);
 
-        return """
+        // Build WAL archiving configuration using pgBackRest if backup is enabled
+        String archiveParams = "";
+        String recoveryConf = "";
+        if (backupEnabled && s3Endpoint != null && !s3Endpoint.isBlank()) {
+            archiveParams = """
+                    archive_mode: "on"
+                    archive_timeout: 60
+                    archive_command: 'pgbackrest --stanza=%s archive-push %%p'
+                """.formatted(clusterSlug);
+
+            recoveryConf = """
+
+              recovery_conf:
+                restore_command: 'pgbackrest --stanza=%s archive-get %%f %%p'
+            """.formatted(clusterSlug);
+        }
+
+        String baseConfig = """
             scope: %s
             namespace: /pgcluster/
             name: %s
@@ -538,7 +682,7 @@ public class ProvisioningService {
                     wal_keep_size: 128MB
                     logging_collector: off
                     log_destination: stderr
-
+            %s
               initdb:
                 - encoding: UTF8
                 - data-checksums
@@ -570,7 +714,7 @@ public class ProvisioningService {
                 superuser:
                   username: postgres
                   password: %s
-
+            %s
             tags:
               nofailover: false
               noloadbalance: false
@@ -583,12 +727,16 @@ public class ProvisioningService {
                 etcdHosts,          // etcd hosts
                 mem.sharedBuffers,  // shared_buffers
                 mem.effectiveCache, // effective_cache_size
+                archiveParams,      // archive parameters
                 postgresPassword,   // postgres password
                 replicatorPassword, // replicator password
                 nodeIp,             // postgresql connect_address
                 replicatorPassword, // replication password
-                postgresPassword    // superuser password
+                postgresPassword,   // superuser password
+                recoveryConf        // recovery configuration
         );
+
+        return baseConfig;
     }
 
     /**
@@ -691,16 +839,10 @@ public class ProvisioningService {
                             10000
                     );
 
-                    if (result.isSuccess()) {
-                        String output = result.getStdout();
-                        // Check for leader role (handle JSON with or without spaces)
-                        if (output.contains("\"role\": \"master\"") || output.contains("\"role\":\"master\"") ||
-                            output.contains("\"role\": \"primary\"") || output.contains("\"role\":\"primary\"") ||
-                            output.contains("\"role\": \"leader\"") || output.contains("\"role\":\"leader\"")) {
-                            log.info("Patroni cluster {} has elected leader on {}",
-                                    clusterSlug, node.getName());
-                            return;
-                        }
+                    if (result.isSuccess() && patroniService.isLeaderRole(result.getStdout())) {
+                        log.info("Patroni cluster {} has elected leader on {}",
+                                clusterSlug, node.getName());
+                        return;
                     }
                 }
 
@@ -718,10 +860,70 @@ public class ProvisioningService {
     }
 
     /**
-     * Find the leader node's IP
+     * Apply archive settings via Patroni API and restart PostgreSQL.
+     * The bootstrap config in patroni.yml doesn't update running clusters,
+     * so we need to apply settings via the Patroni REST API.
      */
-    private String findLeaderIp(List<VpsNode> nodes) {
-        for (VpsNode node : nodes) {
+    private void applyArchiveSettings(VpsNode leaderNode, String stanzaName) {
+        // Validate stanzaName to prevent shell injection
+        if (stanzaName == null || !stanzaName.matches("^[a-zA-Z0-9_-]+$")) {
+            throw new IllegalArgumentException("Invalid stanza name: " + stanzaName);
+        }
+        log.info("Applying archive settings via Patroni API for stanza {}", stanzaName);
+
+        // Update Patroni config via PATCH /config
+        String configJson = String.format(
+                "{\"postgresql\": {\"parameters\": {\"archive_mode\": \"on\", " +
+                "\"archive_command\": \"pgbackrest --stanza=%s archive-push %%p\", " +
+                "\"archive_timeout\": 60}}}",
+                stanzaName
+        );
+
+        String patchCommand = String.format(
+                "curl -s -X PATCH http://localhost:8008/config -H 'Content-Type: application/json' -d '%s'",
+                configJson
+        );
+
+        SshService.CommandResult patchResult = sshService.executeCommand(
+                leaderNode.getPublicIp(),
+                patchCommand,
+                30000
+        );
+
+        if (!patchResult.isSuccess()) {
+            throw new RuntimeException("Failed to update Patroni config: " + patchResult.getStderr());
+        }
+
+        log.info("Patroni config updated, restarting PostgreSQL...");
+
+        // Restart PostgreSQL to apply archive_mode (requires restart)
+        SshService.CommandResult restartResult = sshService.executeCommand(
+                leaderNode.getPublicIp(),
+                "curl -s -X POST http://localhost:8008/restart -d '{}'",
+                60000
+        );
+
+        if (!restartResult.isSuccess()) {
+            throw new RuntimeException("Failed to restart PostgreSQL: " + restartResult.getStderr());
+        }
+
+        // Wait for PostgreSQL to be ready (polling instead of fixed sleep)
+        waitForPostgresReady(leaderNode, 30);
+
+        log.info("Archive settings applied and PostgreSQL restarted");
+    }
+
+    /**
+     * Wait for PostgreSQL to be ready after restart by polling Patroni API.
+     *
+     * @param node The node to check
+     * @param maxWaitSeconds Maximum time to wait
+     */
+    private void waitForPostgresReady(VpsNode node, int maxWaitSeconds) {
+        int pollIntervalMs = 2000;
+        int maxAttempts = (maxWaitSeconds * 1000) / pollIntervalMs;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
             try {
                 SshService.CommandResult result = sshService.executeCommand(
                         node.getPublicIp(),
@@ -729,23 +931,27 @@ public class ProvisioningService {
                         10000
                 );
 
-                if (result.isSuccess()) {
-                    String output = result.getStdout();
-                    // Check for leader role (handle JSON with or without spaces)
-                    if (output.contains("\"role\": \"master\"") || output.contains("\"role\":\"master\"") ||
-                        output.contains("\"role\": \"primary\"") || output.contains("\"role\":\"primary\"") ||
-                        output.contains("\"role\": \"leader\"") || output.contains("\"role\":\"leader\"")) {
-                        return node.getPublicIp();
-                    }
+                if (result.isSuccess() && patroniService.isLeaderRole(result.getStdout())) {
+                    log.info("PostgreSQL is ready after {} seconds", (attempt * pollIntervalMs) / 1000);
+                    return;
                 }
+
+                Thread.sleep(pollIntervalMs);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for PostgreSQL", e);
             } catch (Exception e) {
-                log.warn("Error checking node {} for leader: {}", node.getName(), e.getMessage());
+                log.debug("Waiting for PostgreSQL... attempt {}/{}: {}", attempt + 1, maxAttempts, e.getMessage());
+                try {
+                    Thread.sleep(pollIntervalMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("Interrupted while waiting for PostgreSQL", ie);
+                }
             }
         }
 
-        // Fallback to first node if no leader found
-        log.warn("No leader found, falling back to first node");
-        return nodes.get(0).getPublicIp();
+        log.warn("PostgreSQL did not become ready within {} seconds, continuing anyway", maxWaitSeconds);
     }
 
     /**
@@ -845,12 +1051,401 @@ public class ProvisioningService {
         });
     }
 
-    private String generatePassword(int length) {
-        String chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-        StringBuilder sb = new StringBuilder(length);
-        for (int i = 0; i < length; i++) {
-            sb.append(chars.charAt(RANDOM.nextInt(chars.length())));
+    /**
+     * Provision a new cluster by restoring from a backup.
+     *
+     * Key differences from normal provisioning:
+     * 1. pgBackRest config points to SOURCE cluster's S3 path (for reading backup)
+     * 2. Patroni bootstrap uses pgbackrest restore method instead of initdb
+     * 3. After restore completes, pgBackRest is reconfigured for new cluster's path
+     * 4. New stanza is created for the new cluster
+     */
+    @Transactional
+    public void provisionClusterFromRestore(Cluster targetCluster, Cluster sourceCluster,
+                                             Backup backup, Instant targetTime, RestoreJob job) {
+        log.info("Starting restore provisioning: {} -> {}", sourceCluster.getSlug(), targetCluster.getSlug());
+
+        updateClusterStatus(targetCluster.getId(), Cluster.STATUS_CREATING, null);
+
+        // Generate passwords for new cluster
+        String replicatorPassword = PasswordGenerator.generate(24);
+
+        // Update job progress
+        updateRestoreJobProgress(job, "CREATING_SERVERS", 5);
+
+        // Phase 1: Create VPS nodes
+        log.info("Phase 1: Creating VPS nodes for restored cluster...");
+        updateClusterProgress(targetCluster.getId(), Cluster.STEP_CREATING_SERVERS, 1);
+        List<VpsNode> nodes = createVpsNodes(targetCluster);
+
+        // Clear any stale SSH host keys for these IPs (handles IP recycling)
+        for (VpsNode node : nodes) {
+            sshService.removeHostKeyTrust(node.getPublicIp());
         }
-        return sb.toString();
+
+        // Phase 2: Wait for SSH
+        log.info("Phase 2: Waiting for SSH on all nodes...");
+        updateClusterProgress(targetCluster.getId(), Cluster.STEP_WAITING_SSH, 2);
+        updateRestoreJobProgress(job, "WAITING_SSH", 15);
+        waitForSsh(nodes);
+
+        // Phase 3: Build cluster configuration
+        log.info("Phase 3: Building cluster configuration...");
+        updateClusterProgress(targetCluster.getId(), Cluster.STEP_BUILDING_CONFIG, 3);
+        String etcdCluster = nodes.stream()
+                .map(n -> n.getName() + "=http://" + n.getPublicIp() + ":2380")
+                .collect(Collectors.joining(","));
+        String etcdHosts = nodes.stream()
+                .map(n -> n.getPublicIp() + ":2379")
+                .collect(Collectors.joining(","));
+
+        // Phase 4a: Upload configs (restore mode - pgBackRest points to source cluster)
+        log.info("Phase 4a: Uploading configs (restore mode) to all nodes...");
+        updateClusterProgress(targetCluster.getId(), Cluster.STEP_STARTING_CONTAINERS, 4);
+        updateRestoreJobProgress(job, "CONFIGURING_NODES", 20);
+
+        VpsNode firstNode = nodes.get(0);
+
+        for (int i = 0; i < nodes.size(); i++) {
+            VpsNode node = nodes.get(i);
+
+            if (i == 0) {
+                // First node: restore from backup using pgBackRest
+                uploadNodeConfigForRestore(targetCluster, sourceCluster, node, etcdCluster,
+                        etcdHosts, replicatorPassword, backup.getPgbackrestLabel(), targetTime);
+            } else {
+                // Replica nodes: will stream from restored leader
+                uploadNodeConfigForReplica(targetCluster, node, etcdCluster, etcdHosts, replicatorPassword);
+            }
+
+            // Upload pgBackRest config pointing to SOURCE cluster (for reading backup)
+            pgBackRestService.uploadRestoreConfig(sourceCluster, node);
+        }
+
+        // Phase 4b: Start etcd on all nodes
+        log.info("Phase 4b: Starting etcd on all nodes...");
+        for (VpsNode node : nodes) {
+            startEtcdContainer(node);
+        }
+
+        // Phase 4c: Wait for etcd cluster
+        log.info("Phase 4c: Waiting for etcd cluster...");
+        waitForEtcdCluster(nodes);
+
+        // Phase 4d: Start Patroni on first node only (restore will happen)
+        log.info("Phase 4d: Starting Patroni on first node (restore mode)...");
+        updateRestoreJobProgress(job, "RESTORING_DATA", 30);
+        // Start only patroni and node-exporter first (without health-check dependent services)
+        startCoreContainersForRestore(firstNode);
+
+        // Phase 5: Wait for restore to complete (configurable timeout)
+        log.info("Phase 5: Waiting for pgBackRest restore to complete (timeout: {} minutes)...", restoreTimeoutMinutes);
+        waitForPatroniRestore(firstNode, targetCluster.getSlug(), restoreTimeoutMinutes * 60);
+
+        // Now start the dependent services (pgbouncer, postgres-exporter)
+        log.info("Phase 5: Starting dependent containers on first node...");
+        startDependentContainers(firstNode);
+
+        // Phase 5a: Start replica nodes
+        log.info("Phase 5a: Starting replica nodes...");
+        updateRestoreJobProgress(job, "STARTING_REPLICAS", 70);
+        for (int i = 1; i < nodes.size(); i++) {
+            startRemainingContainers(nodes.get(i));
+        }
+
+        // Wait for full cluster health
+        log.info("Phase 5b: Waiting for cluster to be fully healthy...");
+        updateClusterProgress(targetCluster.getId(), Cluster.STEP_ELECTING_LEADER, 5);
+        waitForPatroniCluster(nodes, targetCluster.getSlug());
+
+        // Phase 5c: Reconfigure pgBackRest for NEW cluster's repository
+        log.info("Phase 5c: Reconfiguring pgBackRest for new cluster...");
+        updateRestoreJobProgress(job, "CONFIGURING_BACKUP", 85);
+        for (VpsNode node : nodes) {
+            pgBackRestService.uploadConfig(targetCluster, node);
+        }
+
+        // Phase 5d: Create new stanza for the restored cluster
+        if (backupEnabled && s3Endpoint != null && !s3Endpoint.isBlank()) {
+            log.info("Phase 5d: Initializing pgBackRest for new cluster...");
+            VpsNode leaderNode = nodes.stream()
+                    .filter(patroniService::isLeaderNode)
+                    .findFirst()
+                    .orElse(firstNode);
+
+            try {
+                applyArchiveSettings(leaderNode, targetCluster.getSlug());
+                pgBackRestService.createStanza(targetCluster, leaderNode);
+                log.info("pgBackRest stanza created for restored cluster: {}", targetCluster.getSlug());
+            } catch (Exception e) {
+                log.warn("Failed to initialize pgBackRest for restored cluster (non-critical): {}", e.getMessage());
+            }
+        }
+
+        // Phase 6: Create DNS record
+        log.info("Phase 6: Creating DNS record...");
+        updateClusterProgress(targetCluster.getId(), Cluster.STEP_CREATING_DNS, 6);
+        updateRestoreJobProgress(job, "CREATING_DNS", 95);
+        String leaderIp = patroniService.findLeaderIp(nodes);
+        createDnsRecord(targetCluster.getSlug(), leaderIp);
+
+        // Update cluster status
+        targetCluster.setHostname(targetCluster.getSlug() + "." + baseDomain);
+        targetCluster.setStatus(Cluster.STATUS_RUNNING);
+        clusterRepository.save(targetCluster);
+
+        log.info("Restored cluster {} provisioned successfully in {} nodes", targetCluster.getSlug(), nodes.size());
+    }
+
+    /**
+     * Upload configuration for first node that will restore from backup
+     */
+    private void uploadNodeConfigForRestore(Cluster targetCluster, Cluster sourceCluster, VpsNode node,
+                                             String etcdCluster, String etcdHosts, String replicatorPassword,
+                                             String backupLabel, Instant targetTime) {
+        log.info("Uploading restore config to node {}...", node.getName());
+
+        // Generate .env file
+        String envFile = generateEnvFile(targetCluster.getPostgresPassword(), replicatorPassword);
+
+        // Generate docker-compose.yml
+        String dockerCompose = generateDockerCompose(
+                targetCluster.getSlug(),
+                node.getName(),
+                node.getPublicIp(),
+                etcdCluster
+        );
+
+        // Generate patroni.yml with restore method
+        String patroniYml = generatePatroniConfigForRestore(
+                targetCluster.getId().toString(),
+                targetCluster.getSlug(),
+                node.getName(),
+                node.getPublicIp(),
+                etcdHosts,
+                targetCluster.getPostgresPassword(),
+                replicatorPassword,
+                targetCluster.getNodeSize(),
+                sourceCluster.getSlug(),
+                backupLabel,
+                targetTime
+        );
+
+        // Ensure config directory exists
+        sshService.executeCommand(node.getPublicIp(), "mkdir -p /opt/pgcluster");
+
+        // Upload configs
+        sshService.uploadContent(node.getPublicIp(), envFile, "/opt/pgcluster/.env");
+        sshService.executeCommand(node.getPublicIp(), "chmod 600 /opt/pgcluster/.env");
+
+        sshService.uploadContent(node.getPublicIp(), dockerCompose, "/opt/pgcluster/docker-compose.yml");
+        sshService.uploadContent(node.getPublicIp(), patroniYml, "/opt/pgcluster/patroni.yml");
+        sshService.executeCommand(node.getPublicIp(), "chmod 644 /opt/pgcluster/patroni.yml");
+
+        // Ensure data directories exist
+        sshService.executeCommand(node.getPublicIp(),
+                "mkdir -p /data/postgresql /data/etcd && chmod 700 /data/postgresql && chown -R 999:999 /data/postgresql");
+
+        // Generate and upload PgBouncer configs
+        String pgbouncerConfig = generatePgBouncerConfig(targetCluster.getNodeSize());
+        sshService.uploadContent(node.getPublicIp(), pgbouncerConfig, "/opt/pgcluster/pgbouncer.ini");
+
+        String pgbouncerUserlist = generatePgBouncerUserlist(targetCluster.getPostgresPassword());
+        sshService.uploadContent(node.getPublicIp(), pgbouncerUserlist, "/opt/pgcluster/userlist.txt");
+        sshService.executeCommand(node.getPublicIp(), "chmod 644 /opt/pgcluster/userlist.txt");
+
+        log.info("Restore config uploaded to node {}", node.getName());
+    }
+
+    /**
+     * Upload configuration for replica nodes (stream from leader)
+     */
+    private void uploadNodeConfigForReplica(Cluster cluster, VpsNode node, String etcdCluster,
+                                             String etcdHosts, String replicatorPassword) {
+        // Use normal config - replicas will stream from restored leader
+        uploadNodeConfig(cluster, node, etcdCluster, etcdHosts, replicatorPassword);
+    }
+
+    /**
+     * Generate patroni.yml configured for restore from pgBackRest backup
+     */
+    private String generatePatroniConfigForRestore(String clusterId, String clusterSlug, String nodeName,
+                                                    String nodeIp, String etcdHosts, String postgresPassword,
+                                                    String replicatorPassword, String nodeSize,
+                                                    String sourceClusterSlug, String backupLabel, Instant targetTime) {
+
+        // Calculate PostgreSQL memory settings based on node size
+        MemorySettings mem = getMemorySettings(nodeSize);
+
+        // Build pgBackRest restore command
+        StringBuilder restoreCmd = new StringBuilder();
+        restoreCmd.append("pgbackrest --stanza=").append(sourceClusterSlug);
+        if (backupLabel != null && !backupLabel.isEmpty()) {
+            restoreCmd.append(" --set=").append(backupLabel);
+        }
+        restoreCmd.append(" --delta restore");
+
+        // Build recovery target settings for PITR
+        // Note: Second line needs explicit indentation because %s only indents the first line
+        String recoveryTarget = "";
+        if (targetTime != null) {
+            String targetTimeStr = targetTime.toString().replace("T", " ").replace("Z", "");
+            recoveryTarget = "recovery_target_time: '%s'\n                  recovery_target_action: promote"
+                    .formatted(targetTimeStr);
+        }
+
+        return """
+            scope: %s
+            namespace: /pgcluster/
+            name: %s
+
+            restapi:
+              listen: 0.0.0.0:8008
+              connect_address: %s:8008
+
+            etcd3:
+              hosts: %s
+
+            bootstrap:
+              dcs:
+                ttl: 30
+                loop_wait: 10
+                retry_timeout: 10
+                maximum_lag_on_failover: 1048576
+                postgresql:
+                  use_pg_rewind: true
+                  use_slots: true
+                  parameters:
+                    max_connections: 100
+                    shared_buffers: %s
+                    effective_cache_size: %s
+                    work_mem: 4MB
+                    maintenance_work_mem: 64MB
+                    wal_level: replica
+                    hot_standby: 'on'
+                    max_wal_senders: 10
+                    max_replication_slots: 10
+                    archive_mode: 'on'
+                    archive_command: 'pgbackrest --stanza=%s archive-push %%p'
+
+              method: pgbackrest
+              pgbackrest:
+                command: '%s'
+                keep_existing_recovery_conf: false
+                no_params: true
+                recovery_conf:
+                  restore_command: 'pgbackrest --stanza=%s archive-get %%f %%p'
+                  %s
+
+              pg_hba:
+                - host replication replicator 0.0.0.0/0 md5
+                - host all all 0.0.0.0/0 md5
+
+              users:
+                postgres:
+                  password: %s
+                  options:
+                    - superuser
+                replicator:
+                  password: %s
+                  options:
+                    - replication
+
+            postgresql:
+              listen: 0.0.0.0:5432
+              connect_address: %s:5432
+              data_dir: /var/lib/postgresql/data
+              pgpass: /tmp/pgpass
+              authentication:
+                superuser:
+                  username: postgres
+                  password: %s
+                replication:
+                  username: replicator
+                  password: %s
+                rewind:
+                  username: postgres
+                  password: %s
+              parameters:
+                unix_socket_directories: '/var/run/postgresql'
+
+            tags:
+              nofailover: false
+              noloadbalance: false
+              clonefrom: false
+              nosync: false
+            """.formatted(
+                clusterSlug,
+                nodeName,
+                nodeIp,
+                etcdHosts,
+                mem.sharedBuffers(),
+                mem.effectiveCache(),
+                clusterSlug,           // archive_command uses NEW cluster stanza
+                restoreCmd.toString(), // pgbackrest restore command
+                sourceClusterSlug,     // restore_command uses SOURCE cluster stanza
+                recoveryTarget,
+                postgresPassword,
+                replicatorPassword,
+                nodeIp,
+                postgresPassword,
+                replicatorPassword,
+                postgresPassword
+        );
+    }
+
+    /**
+     * Wait for Patroni to complete pgBackRest restore
+     */
+    private void waitForPatroniRestore(VpsNode node, String clusterSlug, int timeoutSeconds) {
+        int maxAttempts = timeoutSeconds / 5;
+        int attempt = 0;
+
+        log.info("Waiting for Patroni restore to complete (timeout: {}s)...", timeoutSeconds);
+
+        while (attempt < maxAttempts) {
+            try {
+                Thread.sleep(5000);
+                attempt++;
+
+                SshService.CommandResult result = sshService.executeCommand(
+                        node.getPublicIp(),
+                        "curl -s http://localhost:8008/patroni",
+                        10000
+                );
+
+                if (result.isSuccess()) {
+                    String output = result.getStdout();
+                    // Check if PostgreSQL is running and ready
+                    if ((output.contains("\"role\": \"master\"") || output.contains("\"role\":\"master\"") ||
+                         output.contains("\"role\": \"primary\"") || output.contains("\"role\":\"primary\"")) &&
+                        output.contains("\"state\": \"running\"")) {
+                        log.info("Patroni restore completed after {} attempts (~{}s)", attempt, attempt * 5);
+                        return;
+                    }
+
+                    // Log progress
+                    if (attempt % 12 == 0) { // Every minute
+                        log.info("Restore still in progress... ({}s elapsed)", attempt * 5);
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for restore");
+            }
+        }
+
+        throw new RuntimeException("pgBackRest restore did not complete within " + timeoutSeconds + " seconds");
+    }
+
+    /**
+     * Update restore job progress
+     */
+    private void updateRestoreJobProgress(RestoreJob job, String step, int progress) {
+        if (job != null) {
+            job.setCurrentStep(step);
+            job.setProgress(progress);
+            restoreJobRepository.save(job);
+        }
     }
 }

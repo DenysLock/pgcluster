@@ -11,20 +11,26 @@ import com.pgcluster.api.model.entity.User;
 import com.pgcluster.api.model.entity.VpsNode;
 import com.pgcluster.api.repository.ClusterRepository;
 import com.pgcluster.api.repository.VpsNodeRepository;
+import com.pgcluster.api.util.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.pgcluster.api.event.ClusterCreatedEvent;
+import com.pgcluster.api.event.ClusterDeleteRequestedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Service for managing PostgreSQL clusters.
+ * Handles cluster CRUD operations, health checks, and coordinates with
+ * ProvisioningService for infrastructure management.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -35,8 +41,8 @@ public class ClusterService {
     @Lazy
     private final ProvisioningService provisioningService;
     private final SshService sshService;
-
-    private static final SecureRandom RANDOM = new SecureRandom();
+    private final PatroniService patroniService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ClusterListResponse listClusters(User user) {
         List<Cluster> clusters = clusterRepository.findByUserOrderByCreatedAtDesc(user);
@@ -108,7 +114,7 @@ public class ClusterService {
         }
 
         // Generate postgres password
-        String postgresPassword = generatePassword(24);
+        String postgresPassword = PasswordGenerator.generate(24);
 
         // Create cluster entity (hostname is set later in Phase 6 after DNS creation)
         Cluster cluster = Cluster.builder()
@@ -127,14 +133,8 @@ public class ClusterService {
         cluster = clusterRepository.save(cluster);
         log.info("Cluster created: {} ({})", cluster.getName(), cluster.getSlug());
 
-        // Trigger async provisioning AFTER transaction commits
-        final Cluster savedCluster = cluster;
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                provisioningService.provisionClusterAsync(savedCluster);
-            }
-        });
+        // Publish event to trigger async provisioning after transaction commits
+        eventPublisher.publishEvent(new ClusterCreatedEvent(this, cluster));
 
         return ClusterResponse.fromEntity(cluster);
     }
@@ -155,14 +155,8 @@ public class ClusterService {
 
         log.info("Cluster marked for deletion: {} ({})", cluster.getName(), cluster.getSlug());
 
-        // Trigger async deletion AFTER transaction commits
-        final Cluster clusterToDelete = cluster;
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-            @Override
-            public void afterCommit() {
-                provisioningService.deleteClusterAsync(clusterToDelete);
-            }
-        });
+        // Publish event to trigger async deletion after transaction commits
+        eventPublisher.publishEvent(new ClusterDeleteRequestedEvent(this, cluster));
     }
 
     /**
@@ -204,23 +198,16 @@ public class ClusterService {
                     String output = result.getStdout();
                     healthBuilder.reachable(true);
 
-                    // Parse Patroni JSON response - handle whitespace variations
-                    // Look for "role" : "primary" or "role": "replica" etc
-                    if (output.contains("\"primary\"") && output.contains("\"role\"")) {
-                        healthBuilder.role("leader");
-                        healthBuilder.state("running");
+                    // Parse Patroni JSON response using shared PatroniService methods
+                    String role = patroniService.parseRole(output);
+                    String state = patroniService.getStateForRole(role);
+                    healthBuilder.role(role);
+                    healthBuilder.state(state);
+
+                    if ("leader".equals(role)) {
                         leaderNode = node.getPublicIp();
-                    } else if (output.contains("\"master\"") && output.contains("\"role\"")) {
-                        healthBuilder.role("leader");
-                        healthBuilder.state("running");
-                        leaderNode = node.getPublicIp();
-                    } else if (output.contains("\"replica\"") && output.contains("\"role\"")) {
-                        healthBuilder.role("replica");
-                        healthBuilder.state("streaming");
+                    } else if ("replica".equals(role)) {
                         replicaCount++;
-                    } else {
-                        healthBuilder.role("unknown");
-                        healthBuilder.state("unknown");
                     }
                 } else {
                     healthBuilder.role("unknown");
@@ -276,7 +263,7 @@ public class ClusterService {
 
         // Try up to 10 times to generate unique slug
         for (int attempt = 0; attempt < 10; attempt++) {
-            String suffix = generateAlphanumericSuffix(6);
+            String suffix = PasswordGenerator.generateAlphanumericSuffix(6);
             String slug = baseSlug + "-" + suffix;
 
             if (!clusterRepository.existsBySlug(slug)) {
@@ -287,27 +274,5 @@ public class ClusterService {
 
         // Extremely unlikely to reach here
         throw new ApiException("Unable to generate unique slug after 10 attempts", HttpStatus.CONFLICT);
-    }
-
-    /**
-     * Generate random alphanumeric suffix.
-     * 6 chars from 36 characters (a-z, 0-9) = 36^6 combinations
-     */
-    private String generateAlphanumericSuffix(int length) {
-        String chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-        StringBuilder sb = new StringBuilder(length);
-        for (int i = 0; i < length; i++) {
-            sb.append(chars.charAt(RANDOM.nextInt(chars.length())));
-        }
-        return sb.toString();
-    }
-
-    private String generatePassword(int length) {
-        String chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-        StringBuilder sb = new StringBuilder(length);
-        for (int i = 0; i < length; i++) {
-            sb.append(chars.charAt(RANDOM.nextInt(chars.length())));
-        }
-        return sb.toString();
     }
 }

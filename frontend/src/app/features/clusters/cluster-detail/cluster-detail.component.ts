@@ -3,7 +3,9 @@ import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { interval, Subscription, switchMap } from 'rxjs';
 import { ClusterService } from '../../../core/services/cluster.service';
+import { NotificationService } from '../../../core/services/notification.service';
 import { Cluster, ClusterCredentials, ClusterHealth } from '../../../core/models';
+import { POLLING_INTERVALS } from '../../../core/constants';
 import {
   StatusBadgeComponent,
   SpinnerComponent,
@@ -11,6 +13,8 @@ import {
   ConfirmDialogComponent,
   CardComponent
 } from '../../../shared/components';
+import { BackupsCardComponent } from './backups-card/backups-card.component';
+import { ExportsCardComponent } from './exports-card/exports-card.component';
 
 interface ProvisioningStep {
   id: number;
@@ -28,7 +32,9 @@ interface ProvisioningStep {
     SpinnerComponent,
     ConnectionStringComponent,
     ConfirmDialogComponent,
-    CardComponent
+    CardComponent,
+    BackupsCardComponent,
+    ExportsCardComponent
   ],
   template: `
     <div class="space-y-6">
@@ -41,7 +47,7 @@ interface ProvisioningStep {
         <div class="flex items-start justify-between">
           <div>
             <a routerLink="/clusters" class="text-sm text-muted-foreground hover:text-foreground inline-flex items-center mb-4">
-              <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
               </svg>
               Back to Clusters
@@ -63,7 +69,7 @@ interface ProvisioningStep {
                   <!-- Step indicator -->
                   @if (step.id < currentStep()) {
                     <span class="w-7 h-7 rounded-full bg-emerald-500 text-white flex items-center justify-center text-sm font-medium">
-                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                       </svg>
                     </span>
@@ -190,7 +196,7 @@ interface ProvisioningStep {
                       <app-spinner size="sm" class="mr-2" />
                       Loading...
                     } @else {
-                      <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                       </svg>
@@ -204,7 +210,7 @@ interface ProvisioningStep {
                   <!-- Warning banner -->
                   <div class="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
                     <div class="flex items-start gap-2">
-                      <svg class="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <svg class="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                       </svg>
                       <p class="text-sm text-amber-800 dark:text-amber-200">{{ credentials()?.warning }}</p>
@@ -269,6 +275,23 @@ interface ProvisioningStep {
           </app-card>
         }
 
+        <!-- Backups Card (visible when running or has backups) -->
+        @if (isRunning()) {
+          <app-backups-card
+            [clusterId]="clusterId"
+            [clusterSlug]="cluster()?.slug || ''"
+            [isClusterRunning]="isRunning()"
+          />
+        }
+
+        <!-- Exports Card (visible when running) -->
+        @if (isRunning()) {
+          <app-exports-card
+            [clusterId]="clusterId"
+            [isClusterRunning]="isRunning()"
+          />
+        }
+
         <!-- Danger Zone -->
         <app-card title="Danger Zone" variant="danger">
           <div class="flex items-center justify-between">
@@ -319,7 +342,7 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
   credentials = signal<ClusterCredentials | null>(null);
   credentialsLoading = signal(false);
 
-  private clusterId: string = '';
+  clusterId: string = '';
   private pollingSubscription?: Subscription;
 
   // Provisioning steps configuration
@@ -335,7 +358,8 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
   constructor(
     private route: ActivatedRoute,
     private router: Router,
-    private clusterService: ClusterService
+    private clusterService: ClusterService,
+    private notificationService: NotificationService
   ) {}
 
   // Computed signals
@@ -421,12 +445,12 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
     // Initial health load
     this.loadHealth();
 
-    // Poll every 10 seconds for both cluster status and health
-    this.pollingSubscription = interval(10000).subscribe(() => {
+    // Poll for both cluster status and health
+    this.pollingSubscription = interval(POLLING_INTERVALS.CLUSTER_STATUS).subscribe(() => {
       // Always refresh cluster status (for progress updates)
       this.clusterService.getCluster(this.clusterId).subscribe({
         next: (cluster) => this.cluster.set(cluster),
-        error: () => {}
+        error: (err) => console.warn('Failed to refresh cluster status:', err)
       });
 
       // Only fetch health if cluster is running
@@ -439,7 +463,7 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
   private loadHealth(): void {
     this.clusterService.getClusterHealth(this.clusterId).subscribe({
       next: (health) => this.health.set(health),
-      error: () => {}
+      error: (err) => console.warn('Failed to load cluster health:', err)
     });
   }
 
@@ -449,10 +473,12 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
 
     this.clusterService.deleteCluster(this.clusterId).subscribe({
       next: () => {
+        this.notificationService.success('Cluster deleted successfully');
         this.router.navigate(['/clusters']);
       },
-      error: () => {
+      error: (err) => {
         this.deleting.set(false);
+        this.notificationService.error(err.error?.message || 'Failed to delete cluster');
       }
     });
   }

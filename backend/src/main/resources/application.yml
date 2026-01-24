@@ -68,10 +68,54 @@ cluster:
 ssh:
   user: ${SSH_USER:root}
   private-key-path: ${SSH_PRIVATE_KEY_PATH:/home/appuser/.ssh/id_rsa}
+  timeout-ms: ${SSH_TIMEOUT_MS:30000}
+  retry:
+    max-attempts: ${SSH_RETRY_MAX_ATTEMPTS:3}
+    delay-ms: ${SSH_RETRY_DELAY_MS:2000}
+
+# Operation Timeouts (in milliseconds)
+timeouts:
+  patroni-api: ${TIMEOUT_PATRONI_API:10000}
+  ssh-command: ${TIMEOUT_SSH_COMMAND:60000}
+  backup: ${TIMEOUT_BACKUP:3600000}      # 60 minutes
+  restore: ${TIMEOUT_RESTORE:7200000}    # 120 minutes
+  export: ${TIMEOUT_EXPORT:3600000}      # 60 minutes
+  container-start: ${TIMEOUT_CONTAINER_START:300000}  # 5 minutes
 
 # Prometheus Configuration
 prometheus:
   url: ${PROMETHEUS_URL:http://localhost:9090}
+
+# S3 Storage Configuration (for backups - Hetzner Object Storage)
+s3:
+  endpoint: ${S3_ENDPOINT:}
+  access-key: ${S3_ACCESS_KEY:}
+  secret-key: ${S3_SECRET_KEY:}
+  bucket: ${S3_BUCKET:pgcluster-backups}
+  region: ${S3_REGION:eu-central-1}
+
+# Backup Configuration (pgBackRest)
+backup:
+  enabled: ${BACKUP_ENABLED:false}
+  retention:
+    daily: 7
+    weekly: 4
+    monthly: 12
+    # pgBackRest-specific retention settings
+    full: 2       # Keep 2 full backups
+    diff: 7       # Keep 7 differential backups
+
+# pgBackRest Paths Configuration
+pgbackrest:
+  config-path: ${PGBACKREST_CONFIG_PATH:/etc/pgbackrest/pgbackrest.conf}
+  config-dir: ${PGBACKREST_CONFIG_DIR:/etc/pgbackrest}
+  log-path: ${PGBACKREST_LOG_PATH:/var/log/pgbackrest}
+  spool-path: ${PGBACKREST_SPOOL_PATH:/var/spool/pgbackrest}
+
+# PostgreSQL Paths Configuration
+postgres:
+  data-path: ${POSTGRES_DATA_PATH:/var/lib/postgresql/data}
+  socket-path: ${POSTGRES_SOCKET_PATH:/var/run/postgresql}
 
 # Actuator
 management:
