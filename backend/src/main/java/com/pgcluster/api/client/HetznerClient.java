@@ -81,6 +81,31 @@ public class HetznerClient {
     }
 
     /**
+     * List servers by label selector (e.g., "cluster=my-cluster")
+     */
+    @CircuitBreaker(name = "hetzner")
+    @Retry(name = "hetzner")
+    public List<ServerResponse> listServersByLabel(String labelSelector) {
+        HttpHeaders headers = createHeaders();
+        HttpEntity<?> entity = new HttpEntity<>(headers);
+
+        log.info("Listing Hetzner servers with label: {}", labelSelector);
+
+        ResponseEntity<ServerListResponse> response = restTemplate.exchange(
+                BASE_URL + "/servers?label_selector=" + labelSelector,
+                HttpMethod.GET,
+                entity,
+                ServerListResponse.class
+        );
+
+        if (response.getBody() != null && response.getBody().getServers() != null) {
+            log.info("Found {} servers with label: {}", response.getBody().getServers().size(), labelSelector);
+            return response.getBody().getServers();
+        }
+        return List.of();
+    }
+
+    /**
      * Get server details
      */
     @CircuitBreaker(name = "hetzner")
@@ -218,6 +243,11 @@ public class HetznerClient {
     @Data
     public static class GetServerResponse {
         private ServerResponse server;
+    }
+
+    @Data
+    public static class ServerListResponse {
+        private List<ServerResponse> servers;
     }
 
     @Data

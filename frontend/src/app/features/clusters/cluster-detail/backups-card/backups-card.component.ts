@@ -6,7 +6,7 @@ import { interval, Subscription } from 'rxjs';
 import { BackupService } from '../../../../core/services/backup.service';
 import { ClusterService } from '../../../../core/services/cluster.service';
 import { NotificationService } from '../../../../core/services/notification.service';
-import { Backup, BackupDeletionInfo, BackupStatus, BackupMetrics, BackupStep } from '../../../../core/models';
+import { Backup, BackupDeletionInfo, BackupStatus, BackupMetrics, BackupStep, Location, ClusterNode } from '../../../../core/models';
 import { POLLING_INTERVALS } from '../../../../core/constants';
 @Component({
   selector: 'app-backups-card',
@@ -305,7 +305,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
       @if (showRestoreDialog()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center">
           <div class="fixed inset-0 bg-black/80" (click)="closeRestoreDialog()"></div>
-          <div class="relative bg-bg-secondary border border-border shadow-lg p-6 w-full max-w-lg mx-4">
+          <div class="relative bg-bg-secondary border border-border shadow-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
             <h2 class="text-lg font-semibold uppercase tracking-wider text-foreground mb-4">Restore from Backup</h2>
 
             <div class="bg-status-warning/10 border border-status-warning p-4 mb-6">
@@ -322,11 +322,112 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               </div>
             </div>
 
-            <div class="space-y-3 mb-6">
-              <div class="flex justify-between text-sm">
-                <span class="text-muted-foreground">New cluster name:</span>
-                <span class="font-mono font-semibold text-foreground">{{ getRestoredClusterName() }}</span>
+            <!-- Editable Cluster Name -->
+            <div class="space-y-2 mb-4">
+              <label class="label">Cluster Name</label>
+              <input
+                type="text"
+                [value]="restoreClusterName()"
+                (input)="restoreClusterName.set($any($event.target).value)"
+                class="input"
+                placeholder="my-restored-cluster"
+              />
+              <p class="text-xs text-muted-foreground">
+                Use lowercase letters, numbers, and hyphens only.
+              </p>
+            </div>
+
+            <!-- Node Locations -->
+            <div class="space-y-4 mb-6">
+              <label class="label">Node Locations</label>
+              <p class="text-xs text-muted-foreground -mt-2">
+                Select a region for each node. Pre-filled from source cluster.
+              </p>
+
+              @if (locationsLoading()) {
+                <div class="flex items-center gap-2 text-muted-foreground py-4">
+                  <span class="spinner w-4 h-4"></span>
+                  <span>Loading locations...</span>
+                </div>
+              } @else {
+                <div class="space-y-3">
+                  @for (nodeIndex of [0, 1, 2]; track nodeIndex) {
+                    <div class="flex items-center gap-4">
+                      <div class="w-20 flex-shrink-0">
+                        <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Node {{ nodeIndex + 1 }}</span>
+                      </div>
+
+                      <div class="relative flex-1">
+                        <button
+                          type="button"
+                          (click)="toggleRestoreDropdown(nodeIndex, $event)"
+                          class="w-full px-4 py-3 bg-bg-tertiary border text-left flex items-center justify-between transition-colors"
+                          [class.border-neon-green]="openDropdown() === nodeIndex"
+                          [class.border-status-error]="getSelectedRestoreLocation(nodeIndex) && !getSelectedRestoreLocation(nodeIndex)?.available"
+                          [class.border-border]="openDropdown() !== nodeIndex && (!getSelectedRestoreLocation(nodeIndex) || getSelectedRestoreLocation(nodeIndex)?.available)"
+                        >
+                          @if (getSelectedRestoreLocation(nodeIndex); as loc) {
+                            <span class="flex items-center gap-3">
+                              <span class="text-xl" [class.grayscale]="!loc.available">{{ loc.flag }}</span>
+                              <span [class.text-foreground]="loc.available" [class.text-status-error]="!loc.available">{{ loc.countryName }}</span>
+                              <span class="text-muted-foreground text-sm">({{ loc.city }})</span>
+                              @if (!loc.available) {
+                                <span class="text-xs uppercase tracking-wider text-status-error border border-status-error px-2 py-0.5 ml-2">Unavailable</span>
+                              }
+                            </span>
+                          } @else {
+                            <span class="text-muted-foreground">Select location...</span>
+                          }
+                          <svg
+                            class="w-4 h-4 text-muted-foreground transition-transform"
+                            [class.rotate-180]="openDropdown() === nodeIndex"
+                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                          >
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+
+                        @if (openDropdown() === nodeIndex) {
+                          <div class="absolute z-50 w-full mt-1 bg-bg-secondary border border-border shadow-lg shadow-black/50 max-h-48 overflow-y-auto">
+                            @for (loc of locations(); track loc.id) {
+                              <button
+                                type="button"
+                                (click)="loc.available && selectRestoreLocation(nodeIndex, loc.id)"
+                                class="w-full px-4 py-3 flex items-center gap-3 text-left transition-colors border-b border-border last:border-0"
+                                [class.bg-neon-green]="restoreNodeRegions()[nodeIndex] === loc.id && loc.available"
+                                [class.text-bg-primary]="restoreNodeRegions()[nodeIndex] === loc.id && loc.available"
+                                [class.hover:bg-bg-tertiary]="restoreNodeRegions()[nodeIndex] !== loc.id && loc.available"
+                                [class.opacity-40]="!loc.available"
+                                [class.cursor-not-allowed]="!loc.available"
+                                [disabled]="!loc.available"
+                              >
+                                <span class="text-xl" [class.grayscale]="!loc.available">{{ loc.flag }}</span>
+                                <div class="flex-1">
+                                  <span [class.text-foreground]="loc.available">{{ loc.countryName }}</span>
+                                  <span class="text-sm ml-2 text-muted-foreground">{{ loc.city }}</span>
+                                </div>
+                                @if (!loc.available) {
+                                  <span class="text-xs uppercase tracking-wider text-status-error border border-status-error px-2 py-0.5">Unavailable</span>
+                                }
+                              </button>
+                            }
+                          </div>
+                        }
+                      </div>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+
+            <!-- Unavailable selection warning -->
+            @if (hasUnavailableRestoreSelections()) {
+              <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 text-sm mb-4">
+                One or more selected regions are no longer available. Please select different regions.
               </div>
+            }
+
+            <div class="space-y-3 mb-6 border-t border-border pt-4">
               <div class="flex justify-between text-sm">
                 <span class="text-muted-foreground">Recovery point:</span>
                 <span class="font-semibold text-foreground">{{ formatDateTime(selectedBackup()?.completedAt || selectedBackup()?.createdAt) }}</span>
@@ -346,7 +447,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               </button>
               <button
                 (click)="restoreBackup()"
-                [disabled]="restoring()"
+                [disabled]="restoring() || !canRestore()"
                 class="btn-primary"
               >
                 @if (restoring()) {
@@ -368,6 +469,7 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   @Input({ required: true }) clusterId!: string;
   @Input() clusterSlug: string = '';
   @Input() isClusterRunning: boolean = false;
+  @Input() clusterNodes: ClusterNode[] = [];
 
   loading = signal(true);
   creating = signal(false);
@@ -382,6 +484,13 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   loadingDeletionInfo = signal(false);
   showRestoreDialog = signal(false);
   selectedBackup = signal<Backup | null>(null);
+
+  // Restore dialog state
+  locations = signal<Location[]>([]);
+  locationsLoading = signal(false);
+  restoreNodeRegions = signal<string[]>(['', '', '']);
+  restoreClusterName = signal('');
+  openDropdown = signal<number | null>(null);
 
   // Backup type selector
   selectedBackupType: 'full' | 'diff' | 'incr' = 'incr';
@@ -547,11 +656,86 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
   openRestoreDialog(backup: Backup): void {
     this.selectedBackup.set(backup);
+
+    // Pre-fill cluster name
+    this.restoreClusterName.set(this.getRestoredClusterName());
+
+    // Pre-fill regions from source cluster nodes
+    const sourceRegions = this.clusterNodes.map(n => n.location);
+    // Pad to 3 if needed
+    while (sourceRegions.length < 3) {
+      sourceRegions.push(sourceRegions[0] || 'fsn1');
+    }
+    this.restoreNodeRegions.set(sourceRegions.slice(0, 3));
+
+    // Load available locations
+    this.loadLocations();
+
     this.showRestoreDialog.set(true);
   }
 
   closeRestoreDialog(): void {
     this.showRestoreDialog.set(false);
+    this.openDropdown.set(null);
+  }
+
+  private loadLocations(): void {
+    this.locationsLoading.set(true);
+    this.clusterService.getLocations().subscribe({
+      next: (locs) => {
+        this.locations.set(locs);
+        this.locationsLoading.set(false);
+      },
+      error: () => {
+        this.locationsLoading.set(false);
+        this.notificationService.error('Failed to load locations');
+      }
+    });
+  }
+
+  toggleRestoreDropdown(nodeIndex: number, event: Event): void {
+    event.stopPropagation();
+    if (this.openDropdown() === nodeIndex) {
+      this.openDropdown.set(null);
+    } else {
+      this.openDropdown.set(nodeIndex);
+    }
+  }
+
+  selectRestoreLocation(nodeIndex: number, locationId: string): void {
+    const loc = this.locations().find(l => l.id === locationId);
+    if (!loc?.available) return;
+
+    const regions = [...this.restoreNodeRegions()];
+    regions[nodeIndex] = locationId;
+    this.restoreNodeRegions.set(regions);
+    this.openDropdown.set(null);
+  }
+
+  getSelectedRestoreLocation(nodeIndex: number): Location | null {
+    const regionId = this.restoreNodeRegions()[nodeIndex];
+    if (!regionId) return null;
+    return this.locations().find(loc => loc.id === regionId) || null;
+  }
+
+  canRestore(): boolean {
+    const regions = this.restoreNodeRegions();
+    const name = this.restoreClusterName();
+    const allRegionsSelected = regions.every(r => r !== '');
+    const allRegionsAvailable = regions.every(r => {
+      const loc = this.locations().find(l => l.id === r);
+      return loc?.available === true;
+    });
+    const validName = name.length >= 3 && /^[a-z][a-z0-9-]*$/.test(name);
+    return allRegionsSelected && allRegionsAvailable && validName && !this.locationsLoading();
+  }
+
+  hasUnavailableRestoreSelections(): boolean {
+    return this.restoreNodeRegions().some(r => {
+      if (!r) return false;
+      const loc = this.locations().find(l => l.id === r);
+      return loc && !loc.available;
+    });
   }
 
   restoreBackup(): void {
@@ -562,7 +746,8 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
     const request = {
       createNewCluster: true,
-      newClusterName: this.getRestoredClusterName()
+      newClusterName: this.restoreClusterName(),
+      nodeRegions: this.restoreNodeRegions()
     };
 
     this.backupService.restoreBackup(this.clusterId, backup.id, request).subscribe({

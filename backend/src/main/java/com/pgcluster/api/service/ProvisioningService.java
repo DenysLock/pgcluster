@@ -21,6 +21,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -96,6 +98,13 @@ public class ProvisioningService {
         clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_CREATING_SERVERS, 1);
         List<VpsNode> nodes = createVpsNodes(cluster);
 
+        // Check if cluster was deleted during node creation
+        if (isClusterBeingDeleted(cluster.getId())) {
+            log.warn("Cluster {} marked for deletion during provisioning, aborting", cluster.getSlug());
+            cleanupNodesOnAbort(nodes);
+            return;
+        }
+
         // Clear any stale SSH host keys for these IPs (handles IP recycling)
         for (VpsNode node : nodes) {
             sshService.removeHostKeyTrust(node.getPublicIp());
@@ -105,6 +114,13 @@ public class ProvisioningService {
         log.info("Phase 2: Waiting for SSH on all nodes...");
         clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_WAITING_SSH, 2);
         waitForSsh(nodes);
+
+        // Check if cluster was deleted during SSH wait
+        if (isClusterBeingDeleted(cluster.getId())) {
+            log.warn("Cluster {} marked for deletion during provisioning, aborting", cluster.getSlug());
+            cleanupNodesOnAbort(nodes);
+            return;
+        }
 
         // Phase 3: Build cluster configuration strings
         log.info("Phase 3: Building cluster configuration...");
@@ -134,6 +150,13 @@ public class ProvisioningService {
         log.info("Phase 4c: Waiting for etcd cluster...");
         waitForEtcdCluster(nodes);
 
+        // Check if cluster was deleted during etcd setup
+        if (isClusterBeingDeleted(cluster.getId())) {
+            log.warn("Cluster {} marked for deletion during provisioning, aborting", cluster.getSlug());
+            cleanupNodesOnAbort(nodes);
+            return;
+        }
+
         // Phase 4d: Start remaining containers (patroni, exporters)
         log.info("Phase 4d: Starting remaining containers on all nodes...");
         for (VpsNode node : nodes) {
@@ -144,6 +167,13 @@ public class ProvisioningService {
         log.info("Phase 5: Waiting for Patroni cluster to be healthy...");
         clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_ELECTING_LEADER, 5);
         waitForPatroniCluster(nodes, cluster.getSlug());
+
+        // Check if cluster was deleted during Patroni setup
+        if (isClusterBeingDeleted(cluster.getId())) {
+            log.warn("Cluster {} marked for deletion during provisioning, aborting", cluster.getSlug());
+            cleanupNodesOnAbort(nodes);
+            return;
+        }
 
         // Phase 5b: Initialize pgBackRest if backup is enabled
         if (backupEnabled && s3Endpoint != null && !s3Endpoint.isBlank()) {
@@ -1050,17 +1080,44 @@ public class ProvisioningService {
     public void deleteCluster(Cluster cluster) {
         log.info("Deleting cluster: {}", cluster.getSlug());
 
-        // Delete VPS nodes
+        // Cancel any pending/in-progress restore jobs involving this cluster
+        cancelOrphanedRestoreJobs(cluster);
+
+        // Collect Hetzner IDs from database
+        Set<Long> deletedServerIds = new HashSet<>();
+
+        // Delete VPS nodes from database
         List<VpsNode> nodes = vpsNodeRepository.findByCluster(cluster);
         for (VpsNode node : nodes) {
             if (node.getHetznerId() != null) {
                 try {
                     hetznerClient.deleteServer(node.getHetznerId());
+                    deletedServerIds.add(node.getHetznerId());
                     log.info("Deleted Hetzner server: {}", node.getHetznerId());
                 } catch (Exception e) {
                     log.warn("Failed to delete Hetzner server {}: {}", node.getHetznerId(), e.getMessage());
                 }
             }
+        }
+
+        // Also query Hetzner directly by label to catch any servers not yet in database
+        // This handles the race condition where server was created but hetznerId not yet saved
+        try {
+            List<HetznerClient.ServerResponse> labeledServers =
+                    hetznerClient.listServersByLabel("cluster=" + cluster.getSlug());
+            for (HetznerClient.ServerResponse server : labeledServers) {
+                if (!deletedServerIds.contains(server.getId())) {
+                    try {
+                        hetznerClient.deleteServer(server.getId());
+                        log.info("Deleted orphaned Hetzner server found by label: {} ({})",
+                                server.getName(), server.getId());
+                    } catch (Exception e) {
+                        log.warn("Failed to delete orphaned server {}: {}", server.getId(), e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to query Hetzner for orphaned servers: {}", e.getMessage());
         }
 
         // Delete DNS record
@@ -1079,6 +1136,58 @@ public class ProvisioningService {
         clusterRepository.save(cluster);
 
         log.info("Cluster {} deleted", cluster.getSlug());
+    }
+
+    /**
+     * Check if the cluster is marked for deletion (DELETING or DELETED status).
+     * Used to abort provisioning early if user deleted the cluster mid-creation.
+     */
+    private boolean isClusterBeingDeleted(UUID clusterId) {
+        return clusterRepository.findById(clusterId)
+                .map(c -> Cluster.STATUS_DELETING.equals(c.getStatus()) ||
+                          Cluster.STATUS_DELETED.equals(c.getStatus()))
+                .orElse(true); // If cluster doesn't exist, treat as deleted
+    }
+
+    /**
+     * Clean up Hetzner servers when provisioning is aborted.
+     * Called when cluster is deleted during creation.
+     */
+    private void cleanupNodesOnAbort(List<VpsNode> nodes) {
+        log.info("Cleaning up {} nodes due to provisioning abort", nodes.size());
+        for (VpsNode node : nodes) {
+            if (node.getHetznerId() != null) {
+                try {
+                    hetznerClient.deleteServer(node.getHetznerId());
+                    log.info("Cleaned up aborted node: {} ({})", node.getName(), node.getHetznerId());
+                } catch (Exception e) {
+                    log.warn("Failed to cleanup node {}: {}", node.getName(), e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * Cancel any pending or in-progress restore jobs involving the given cluster.
+     * Called during cluster deletion to prevent orphaned jobs from blocking future restores.
+     */
+    private void cancelOrphanedRestoreJobs(Cluster cluster) {
+        List<RestoreJob> jobs = restoreJobRepository.findByCluster(cluster);
+        int cancelledCount = 0;
+
+        for (RestoreJob job : jobs) {
+            if ("pending".equals(job.getStatus()) || "in_progress".equals(job.getStatus())) {
+                job.setStatus(RestoreJob.STATUS_CANCELLED);
+                job.setErrorMessage("Cluster was deleted");
+                restoreJobRepository.save(job);
+                cancelledCount++;
+                log.info("Cancelled restore job {} (was {})", job.getId(), job.getStatus());
+            }
+        }
+
+        if (cancelledCount > 0) {
+            log.info("Cancelled {} orphaned restore job(s) for cluster {}", cancelledCount, cluster.getSlug());
+        }
     }
 
     /**

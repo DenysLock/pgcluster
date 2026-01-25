@@ -1,5 +1,7 @@
 package com.pgcluster.api.service;
 
+import com.pgcluster.api.client.HetznerClient;
+import com.pgcluster.api.exception.ApiException;
 import com.pgcluster.api.model.dto.PgBackRestBackupInfo;
 import com.pgcluster.api.model.dto.RestoreRequest;
 import com.pgcluster.api.util.FormatUtils;
@@ -11,6 +13,7 @@ import com.pgcluster.api.model.entity.VpsNode;
 import com.pgcluster.api.repository.BackupRepository;
 import com.pgcluster.api.repository.ClusterRepository;
 import com.pgcluster.api.repository.RestoreJobRepository;
+import com.pgcluster.api.repository.VpsNodeRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +22,7 @@ import org.springframework.context.annotation.Lazy;
 import com.pgcluster.api.event.BackupCreatedEvent;
 import com.pgcluster.api.event.RestoreRequestedEvent;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -48,10 +52,12 @@ public class BackupService {
     private final BackupRepository backupRepository;
     private final RestoreJobRepository restoreJobRepository;
     private final ClusterRepository clusterRepository;
+    private final VpsNodeRepository vpsNodeRepository;
     private final S3StorageService s3StorageService;
     private final PgBackRestService pgBackRestService;
     private final ProvisioningService provisioningService;
     private final PatroniService patroniService;
+    private final HetznerClient hetznerClient;
     private final ApplicationEventPublisher eventPublisher;
 
     // Self-injection to enable @Async to work (Spring proxy requirement)
@@ -544,6 +550,14 @@ public class BackupService {
         boolean createNewCluster = request == null || request.isCreateNewCluster(); // Default to true for safety
         String newClusterName = request != null ? request.getNewClusterName() : null;
 
+        // Get node regions - either from request or from source cluster's nodes
+        List<String> nodeRegions = (request != null && request.getNodeRegions() != null)
+                ? request.getNodeRegions()
+                : getNodeRegionsFromCluster(sourceCluster);
+
+        // Validate node regions availability BEFORE creating cluster
+        validateNodeRegions(nodeRegions, sourceCluster.getNodeSize());
+
         // Validate PITR target time if provided
         String restoreType = RestoreJob.TYPE_FULL;
         if (targetTime != null) {
@@ -578,7 +592,8 @@ public class BackupService {
                     .postgresVersion(sourceCluster.getPostgresVersion())
                     .nodeCount(sourceCluster.getNodeCount())
                     .nodeSize(sourceCluster.getNodeSize())
-                    .region(sourceCluster.getRegion())
+                    .region(nodeRegions.get(0))
+                    .nodeRegions(nodeRegions)
                     .postgresPassword(postgresPassword)
                     .provisioningStep(Cluster.STEP_CREATING_SERVERS)
                     .provisioningProgress(1)
@@ -1005,6 +1020,49 @@ public class BackupService {
                 log.error("Failed to create scheduled backup for cluster {}: {}",
                         cluster.getSlug(), e.getMessage());
             }
+        }
+    }
+
+    /**
+     * Extract node regions from an existing cluster's VpsNodes.
+     * Falls back to cluster's primary region for all 3 nodes if no nodes exist.
+     */
+    private List<String> getNodeRegionsFromCluster(Cluster cluster) {
+        List<VpsNode> nodes = vpsNodeRepository.findByClusterOrderByCreatedAt(cluster);
+        if (nodes.isEmpty()) {
+            // Fallback to cluster's primary region for all 3 nodes
+            String region = cluster.getRegion();
+            return List.of(region, region, region);
+        }
+        // Get locations from nodes, padding to 3 if needed
+        List<String> regions = nodes.stream()
+                .map(VpsNode::getLocation)
+                .limit(3)
+                .collect(Collectors.toList());
+        while (regions.size() < 3) {
+            regions.add(regions.get(0));
+        }
+        return regions;
+    }
+
+    /**
+     * Validate that all requested node regions are available for the server type.
+     * Throws ApiException with BAD_REQUEST if any region is unavailable.
+     */
+    private void validateNodeRegions(List<String> nodeRegions, String serverType) {
+        Set<String> availableLocations = hetznerClient.getAvailableLocationsForServerType(serverType);
+
+        List<String> unavailableRegions = nodeRegions.stream()
+                .filter(region -> !availableLocations.contains(region))
+                .toList();
+
+        if (!unavailableRegions.isEmpty()) {
+            throw new ApiException(
+                    "The following regions are not available for server type " + serverType + ": " +
+                            String.join(", ", unavailableRegions) +
+                            ". Please select different regions.",
+                    HttpStatus.BAD_REQUEST
+            );
         }
     }
 }

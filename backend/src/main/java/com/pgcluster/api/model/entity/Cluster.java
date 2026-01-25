@@ -1,6 +1,7 @@
 package com.pgcluster.api.model.entity;
 
 import com.pgcluster.api.security.EncryptedStringConverter;
+import com.pgcluster.api.util.StringListConverter;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -93,8 +94,9 @@ public class Cluster {
     @Column(name = "provisioning_progress")
     private Integer provisioningProgress;
 
-    // Node regions for provisioning
-    @Transient
+    // Node regions for provisioning (persisted as JSON array)
+    @Column(name = "node_regions")
+    @Convert(converter = StringListConverter.class)
     private List<String> nodeRegions;
 
     // Relationships

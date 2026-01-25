@@ -59,6 +59,7 @@ export interface RestoreRequest {
   targetTime?: string;
   createNewCluster?: boolean;
   newClusterName?: string;
+  nodeRegions?: string[];
 }
 
 export interface BackupDeletionInfo {

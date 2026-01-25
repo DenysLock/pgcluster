@@ -314,6 +314,7 @@ interface ProvisioningStep {
               [clusterId]="clusterId"
               [clusterSlug]="cluster()?.slug || ''"
               [isClusterRunning]="isRunning()"
+              [clusterNodes]="cluster()?.nodes || []"
             />
           }
 
