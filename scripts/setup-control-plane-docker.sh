@@ -164,24 +164,15 @@ main() {
         log_info "Created ${CP_NAMES[$i]}: ID=${SERVER_IDS[$i]}, IP=${SERVER_IPS[$i]}"
     done
 
-    # Step 3: Create Floating IP
-    log_info "Step 3: Creating Floating IP..."
-    FIP_RESULT=$(hetzner_create_floating_ip "${CP_LOCATIONS[0]}" "Control Plane")
-    FIP_ID=$(echo "$FIP_RESULT" | cut -d'|' -f1)
-    FIP_IP=$(echo "$FIP_RESULT" | cut -d'|' -f2)
-    log_info "Floating IP: ID=$FIP_ID, IP=$FIP_IP"
+    # Step 3: Create DNS record (pointing to first node, will be updated by callback on failover)
+    # Using proxied=true for DDoS protection and SSL. When DNS is updated via callback,
+    # Cloudflare instantly routes to new origin (no client DNS caching issues).
+    log_info "Step 3: Creating DNS record (DNS-based failover, no Floating IP)..."
+    cloudflare_create_record "api" "${SERVER_IPS[0]}" true
+    log_info "DNS record created: api.$DOMAIN -> ${SERVER_IPS[0]} (proxied via Cloudflare)"
 
-    # Assign FIP to first server (CP1)
-    log_info "Assigning Floating IP to ${CP_NAMES[0]}..."
-    hetzner_assign_floating_ip "$FIP_ID" "${SERVER_IDS[0]}"
-
-    # Step 4: Create DNS record
-    log_info "Step 4: Creating DNS record..."
-    cloudflare_create_record "api" "$FIP_IP" true
-    log_info "DNS record created (api.$DOMAIN -> $FIP_IP)"
-
-    # Step 5: Wait for servers to be ready
-    log_info "Step 5: Waiting for servers to be ready..."
+    # Step 4: Wait for servers to be ready
+    log_info "Step 4: Waiting for servers to be ready..."
     sleep 20  # Snapshot-based servers boot faster
 
     for ip in "${SERVER_IPS[@]}"; do
@@ -192,12 +183,8 @@ main() {
         log_info "$ip is ready"
     done
 
-    # Configure Floating IP on CP1 at OS level
-    log_info "Configuring Floating IP on ${CP_NAMES[0]}..."
-    ssh_cmd "${SERVER_IPS[0]}" "ip addr add $FIP_IP/32 dev eth0 2>/dev/null || true"
-
-    # Step 6: Configure each node with Docker setup
-    log_info "Step 6: Configuring nodes with Docker..."
+    # Step 5: Configure each node with Docker setup
+    log_info "Step 5: Configuring nodes with Docker..."
 
     for i in 0 1 2; do
         local ip="${SERVER_IPS[$i]}"
@@ -264,8 +251,8 @@ bootstrap:
 
 postgresql:
   callbacks:
-    on_start: /etc/patroni/fip_callback.sh
-    on_role_change: /etc/patroni/fip_callback.sh
+    on_start: /etc/patroni/dns_callback.sh
+    on_role_change: /etc/patroni/dns_callback.sh
   listen: 0.0.0.0:5432
   connect_address: ${ip}:5432
   data_dir: /var/lib/postgresql/data
@@ -289,48 +276,61 @@ tags:
   nosync: false
 EOF"
 
-        # Create FIP callback script
-        log_info "  Creating FIP callback script..."
-        ssh_cmd "$ip" "cat > /opt/pgcluster/fip_callback.sh << 'EOFCB'
+        # Create DNS callback script (pure DNS-based failover, no Floating IP)
+        log_info "  Creating DNS callback script..."
+        ssh_cmd "$ip" "cat > /opt/pgcluster/dns_callback.sh << 'EOFCB'
 #!/bin/bash
+# DNS Callback Script for Control Plane Patroni
+# Updates Cloudflare DNS when this node becomes the leader
+
 ACTION=\"\$1\"
 ROLE=\"\$2\"
 CLUSTER=\"\$3\"
 
-FLOATING_IP=\"${FIP_IP}\"
-FLOATING_IP_ID=\"${FIP_ID}\"
-HETZNER_API_TOKEN=\"${HETZNER_API_TOKEN}\"
-SERVER_ID=\"${server_id}\"
+# DNS configuration
+MY_IP=\"${ip}\"
+CLOUDFLARE_API_TOKEN=\"${CLOUDFLARE_API_TOKEN}\"
+CLOUDFLARE_ZONE_ID=\"${CLOUDFLARE_ZONE_ID}\"
+DNS_HOSTNAME=\"api.${DOMAIN}\"
 
-LOG=\"/var/log/patroni-fip-callback.log\"
+LOG=\"/var/log/patroni-dns-callback.log\"
 
 log() {
     echo \"[\$(date '+%Y-%m-%d %H:%M:%S')] \$*\" >> \$LOG 2>/dev/null || true
+    logger -t \"patroni-dns-callback\" \"\$*\" 2>/dev/null || true
 }
 
 log \"Callback: action=\$ACTION, role=\$ROLE, cluster=\$CLUSTER\"
 
 if [ \"\$ROLE\" == \"master\" ] || [ \"\$ROLE\" == \"leader\" ] || [ \"\$ROLE\" == \"primary\" ]; then
-    log \"Assigning Floating IP...\"
-    curl -s -X POST \"https://api.hetzner.cloud/v1/floating_ips/\${FLOATING_IP_ID}/actions/assign\" \\
-        -H \"Authorization: Bearer \${HETZNER_API_TOKEN}\" \\
-        -H \"Content-Type: application/json\" \\
-        -d \"{\\\"server\\\": \${SERVER_ID}}\" >> \$LOG 2>&1
+    log \"This node is now the leader. Updating DNS record \${DNS_HOSTNAME} to \${MY_IP}...\"
 
-    if ! ip addr show eth0 | grep -q \"\${FLOATING_IP}\"; then
-        ip addr add \${FLOATING_IP}/32 dev eth0 2>&1 || log \"Could not add IP\"
-        log \"Floating IP added to eth0\"
+    # Find DNS record ID
+    DNS_RECORD_ID=\$(curl -s -X GET \"https://api.cloudflare.com/client/v4/zones/\${CLOUDFLARE_ZONE_ID}/dns_records?name=\${DNS_HOSTNAME}\" \\
+        -H \"Authorization: Bearer \${CLOUDFLARE_API_TOKEN}\" \\
+        -H \"Content-Type: application/json\" | grep -o '\"id\":\"[^\"]*\"' | head -1 | cut -d'\"' -f4)
+
+    if [ -n \"\$DNS_RECORD_ID\" ]; then
+        RESPONSE=\$(curl -s -X PATCH \"https://api.cloudflare.com/client/v4/zones/\${CLOUDFLARE_ZONE_ID}/dns_records/\${DNS_RECORD_ID}\" \\
+            -H \"Authorization: Bearer \${CLOUDFLARE_API_TOKEN}\" \\
+            -H \"Content-Type: application/json\" \\
+            -d \"{\\\"content\\\": \\\"\${MY_IP}\\\"}\")
+
+        if echo \"\$RESPONSE\" | grep -q '\"success\":true'; then
+            log \"SUCCESS: DNS updated \${DNS_HOSTNAME} -> \${MY_IP}\"
+        else
+            log \"ERROR: DNS update failed: \$RESPONSE\"
+        fi
+    else
+        log \"ERROR: Could not find DNS record ID for \${DNS_HOSTNAME}\"
     fi
 else
-    if ip addr show eth0 | grep -q \"\${FLOATING_IP}\"; then
-        ip addr del \${FLOATING_IP}/32 dev eth0 2>&1 || true
-        log \"Floating IP removed from eth0\"
-    fi
+    log \"Role is \$ROLE (not leader), no DNS update needed\"
 fi
 
 exit 0
 EOFCB"
-        ssh_cmd "$ip" "chmod +x /opt/pgcluster/fip_callback.sh"
+        ssh_cmd "$ip" "chmod +x /opt/pgcluster/dns_callback.sh"
 
         # Create docker-compose.yml
         log_info "  Creating docker-compose.yml..."
@@ -372,7 +372,7 @@ services:
     volumes:
       - /data/postgresql:/var/lib/postgresql/data
       - /opt/pgcluster/patroni.yml:/etc/patroni/patroni.yml:ro
-      - /opt/pgcluster/fip_callback.sh:/etc/patroni/fip_callback.sh:ro
+      - /opt/pgcluster/dns_callback.sh:/etc/patroni/dns_callback.sh:ro
       - /var/log:/var/log
     environment:
       - PATRONI_NAME=${node_name}
@@ -413,8 +413,8 @@ EOF"
         log_info "${CP_NAMES[$i]} configured"
     done
 
-    # Step 6b: Rebuild Patroni image on all nodes (to fix potential permission issues from snapshot)
-    log_info "Step 6b: Rebuilding Patroni image on all nodes..."
+    # Step 5b: Rebuild Patroni image on all nodes (to fix potential permission issues from snapshot)
+    log_info "Step 5b: Rebuilding Patroni image on all nodes..."
 
     for ip in "${SERVER_IPS[@]}"; do
         log_info "  Rebuilding Patroni image on $ip..."
@@ -448,9 +448,9 @@ docker build -t pgcluster/patroni:16 . > /dev/null 2>&1' &
     wait
     log_info "Patroni images rebuilt on all nodes"
 
-    # Step 7: Start Docker containers on all nodes
+    # Step 6: Start Docker containers on all nodes
     # Important: Start etcd on ALL nodes first (in parallel), then patroni
-    log_info "Step 7: Starting Docker containers..."
+    log_info "Step 6: Starting Docker containers..."
 
     # Phase 1: Start etcd on all nodes in parallel
     log_info "Starting etcd on all nodes..."
@@ -502,7 +502,7 @@ docker build -t pgcluster/patroni:16 . > /dev/null 2>&1' &
         sleep 5
     done
 
-    # Step 7b: Create database user and database
+    # Step 6b: Create database user and database
     if [[ -n "$leader_ip" ]]; then
         log_info "Step 7b: Creating dbaas user and database..."
         ssh_cmd "$leader_ip" "docker exec patroni psql -U postgres -c \"CREATE USER dbaas WITH PASSWORD '$DB_PASSWORD' CREATEROLE CREATEDB;\" 2>/dev/null || true"
@@ -512,8 +512,8 @@ docker build -t pgcluster/patroni:16 . > /dev/null 2>&1' &
         log_warn "No leader found, skipping database user creation"
     fi
 
-    # Step 8: Setup SSL certificates
-    log_info "Step 8: Setting up SSL certificates..."
+    # Step 7: Setup SSL certificates
+    log_info "Step 7: Setting up SSL certificates..."
 
     if [[ -n "$CLOUDFLARE_ORIGIN_CERT" && -n "$CLOUDFLARE_ORIGIN_KEY" ]]; then
         # Use Cloudflare Origin Certificate (recommended)
@@ -567,8 +567,8 @@ nginx -t && systemctl reload nginx'
         done
     fi
 
-    # Step 9: Generate and distribute SSH key for API provisioning
-    log_info "Step 9: Setting up SSH key for API provisioning..."
+    # Step 8: Generate and distribute SSH key for API provisioning
+    log_info "Step 8: Setting up SSH key for API provisioning..."
 
     # Create directory on all nodes
     for ip in "${SERVER_IPS[@]}"; do
@@ -600,8 +600,8 @@ nginx -t && systemctl reload nginx'
     done
     log_info "SSH key distributed to all nodes with correct ownership (1000:1000)"
 
-    # Step 10: Deploy API to all nodes
-    log_info "Step 10: API deployment instructions..."
+    # Step 9: Deploy API to all nodes
+    log_info "Step 9: API deployment instructions..."
     log_info ""
     log_info "Build the API image on your local machine:"
     log_info ""
@@ -653,7 +653,7 @@ nginx -t && systemctl reload nginx'
         log_info "  ${CP_NAMES[$i]}: ${SERVER_IPS[$i]} (ID: ${SERVER_IDS[$i]})"
     done
     log_info ""
-    log_info "Floating IP: $FIP_IP (ID: $FIP_ID)"
+    log_info "DNS: api.$DOMAIN -> ${SERVER_IPS[0]} (updates automatically on failover)"
     log_info ""
     log_info "Services running (Docker containers):"
     log_info "  - etcd (cluster)"
@@ -666,7 +666,7 @@ nginx -t && systemctl reload nginx'
     echo -e "${YELLOW}║              SAVE THESE CREDENTIALS SECURELY!                      ║${NC}"
     echo -e "${YELLOW}╠════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${YELLOW}║${NC} Control Plane Database:                                            ${YELLOW}║${NC}"
-    echo -e "${YELLOW}║${NC}   Host: $FIP_IP:5432                                               ${YELLOW}║${NC}"
+    echo -e "${YELLOW}║${NC}   Host: api.$DOMAIN:5432 (or current leader IP)                   ${YELLOW}║${NC}"
     echo -e "${YELLOW}║${NC}   User: dbaas                                                      ${YELLOW}║${NC}"
     echo -e "${YELLOW}║${NC}   Password: $DB_PASSWORD  ${YELLOW}║${NC}"
     echo -e "${YELLOW}║${NC}                                                                    ${YELLOW}║${NC}"

@@ -6,10 +6,12 @@
 CLOUDFLARE_API="https://api.cloudflare.com/client/v4"
 
 # Create DNS A record
+# Usage: cloudflare_create_record <name> <ip> [proxied] [ttl]
 cloudflare_create_record() {
     local name="$1"
     local ip="$2"
     local proxied="${3:-false}"
+    local ttl="${4:-1}"  # 1 = auto, or specify seconds (60, 120, etc.)
 
     # Check if record exists
     local existing
@@ -27,7 +29,8 @@ cloudflare_create_record() {
                 \"type\": \"A\",
                 \"name\": \"$name\",
                 \"content\": \"$ip\",
-                \"proxied\": $proxied
+                \"proxied\": $proxied,
+                \"ttl\": $ttl
             }")
     else
         # Create new record
@@ -38,7 +41,8 @@ cloudflare_create_record() {
                 \"type\": \"A\",
                 \"name\": \"$name\",
                 \"content\": \"$ip\",
-                \"proxied\": $proxied
+                \"proxied\": $proxied,
+                \"ttl\": $ttl
             }")
     fi
 

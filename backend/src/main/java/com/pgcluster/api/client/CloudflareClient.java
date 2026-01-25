@@ -41,7 +41,7 @@ public class CloudflareClient {
         request.setName(name);
         request.setContent(ip);
         request.setProxied(proxied);
-        request.setTtl(proxied ? 1 : 300); // Auto TTL for proxied, 5min for DNS only
+        request.setTtl(proxied ? 1 : 60); // Auto TTL for proxied, 1min for DNS only (faster failover)
 
         HttpEntity<CreateDnsRequest> entity = new HttpEntity<>(request, headers);
 
@@ -78,7 +78,7 @@ public class CloudflareClient {
         request.setName(name);
         request.setContent(ip);
         request.setProxied(proxied);
-        request.setTtl(proxied ? 1 : 300);
+        request.setTtl(proxied ? 1 : 60);
 
         HttpEntity<CreateDnsRequest> entity = new HttpEntity<>(request, headers);
 
