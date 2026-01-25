@@ -1,8 +1,10 @@
 import { Component, Input, OnInit, OnDestroy, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { interval, Subscription } from 'rxjs';
 import { BackupService } from '../../../../core/services/backup.service';
+import { ClusterService } from '../../../../core/services/cluster.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { Backup, BackupDeletionInfo, BackupStatus, BackupMetrics, BackupStep } from '../../../../core/models';
 import { POLLING_INTERVALS } from '../../../../core/constants';
@@ -390,7 +392,9 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
   constructor(
     private backupService: BackupService,
-    private notificationService: NotificationService
+    private clusterService: ClusterService,
+    private notificationService: NotificationService,
+    private router: Router
   ) {}
 
   pitrWindow = computed(() => {
@@ -562,10 +566,16 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     };
 
     this.backupService.restoreBackup(this.clusterId, backup.id, request).subscribe({
-      next: () => {
+      next: (restoreJob) => {
         this.restoring.set(false);
         this.showRestoreDialog.set(false);
-        this.notificationService.success('Restore job started. A new cluster is being created.');
+        this.notificationService.success('Restore job started. Navigating to new cluster...');
+
+        // Refresh cluster list and navigate to the new cluster
+        if (restoreJob.targetClusterId) {
+          this.clusterService.refreshClusters();
+          this.router.navigate(['/clusters', restoreJob.targetClusterId]);
+        }
       },
       error: (err) => {
         this.restoring.set(false);

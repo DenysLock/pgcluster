@@ -40,5 +40,7 @@ public class ClusterHealthResponse {
         private String state; // running, streaming, unknown
         private boolean reachable;
         private Long lagBytes; // replication lag in bytes (for replicas)
+        private String location; // e.g., "fsn1", "hel1"
+        private String flag; // e.g., "🇩🇪", "🇫🇮"
     }
 }

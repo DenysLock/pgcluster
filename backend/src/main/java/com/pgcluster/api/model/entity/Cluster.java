@@ -93,6 +93,10 @@ public class Cluster {
     @Column(name = "provisioning_progress")
     private Integer provisioningProgress;
 
+    // Node regions for provisioning
+    @Transient
+    private List<String> nodeRegions;
+
     // Relationships
     @OneToMany(mappedBy = "cluster", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default

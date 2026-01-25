@@ -580,6 +580,8 @@ public class BackupService {
                     .nodeSize(sourceCluster.getNodeSize())
                     .region(sourceCluster.getRegion())
                     .postgresPassword(postgresPassword)
+                    .provisioningStep(Cluster.STEP_CREATING_SERVERS)
+                    .provisioningProgress(1)
                     .build();
 
             targetCluster = clusterRepository.save(targetCluster);

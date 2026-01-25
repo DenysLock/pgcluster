@@ -1,9 +1,11 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, inject, signal, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink, ActivatedRoute } from '@angular/router';
 import { FormsModule } from '@angular/forms';
+import { interval, Subscription } from 'rxjs';
 import { ClusterService } from '../../../core/services/cluster.service';
 import { Cluster } from '../../../core/models/cluster.model';
+import { POLLING_INTERVALS } from '../../../core/constants';
 
 @Component({
   selector: 'app-sidebar',
@@ -85,15 +87,23 @@ import { Cluster } from '../../../core/models/cluster.model';
     </aside>
   `,
 })
-export class SidebarComponent {
+export class SidebarComponent implements OnInit, OnDestroy {
   private clusterService = inject(ClusterService);
   private router = inject(Router);
   private route = inject(ActivatedRoute);
+  private pollingSubscription?: Subscription;
 
   searchQuery = signal('');
   loading = signal(true);
 
   clusters = this.clusterService.clusters;
+
+  // Check if any cluster is provisioning (needs polling)
+  private hasProvisioningClusters = computed(() => {
+    return this.clusters().some(c =>
+      ['pending', 'creating', 'provisioning', 'forming'].includes(c.status)
+    );
+  });
 
   filteredClusters = computed(() => {
     const query = this.searchQuery().toLowerCase();
@@ -127,6 +137,14 @@ export class SidebarComponent {
     this.loadClusters();
   }
 
+  ngOnInit(): void {
+    this.startPolling();
+  }
+
+  ngOnDestroy(): void {
+    this.pollingSubscription?.unsubscribe();
+  }
+
   async loadClusters() {
     this.loading.set(true);
     try {
@@ -134,6 +152,15 @@ export class SidebarComponent {
     } finally {
       this.loading.set(false);
     }
+  }
+
+  private startPolling(): void {
+    // Poll cluster list only when there are provisioning clusters
+    this.pollingSubscription = interval(POLLING_INTERVALS.CLUSTER_STATUS).subscribe(() => {
+      if (this.hasProvisioningClusters()) {
+        this.clusterService.refreshClusters();
+      }
+    });
   }
 
   isSelected(clusterId: string): boolean {

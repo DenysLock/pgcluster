@@ -9,6 +9,7 @@ import {
   CreateClusterRequest,
   ClusterListResponse,
   ClusterApiResponse,
+  Location,
   toCluster
 } from '../models';
 
@@ -29,6 +30,13 @@ export class ClusterService {
       }),
       tap(clusters => this.clustersSignal.set(clusters))
     );
+  }
+
+  /**
+   * Fetch available Hetzner locations for node placement.
+   */
+  getLocations(): Observable<Location[]> {
+    return this.http.get<Location[]>(`${environment.apiUrl}/api/v1/clusters/locations`);
   }
 
   getCluster(id: string): Observable<Cluster> {

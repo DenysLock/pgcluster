@@ -1,11 +1,13 @@
 package com.pgcluster.api.service;
 
+import com.pgcluster.api.client.HetznerClient;
 import com.pgcluster.api.exception.ApiException;
 import com.pgcluster.api.model.dto.ClusterCreateRequest;
 import com.pgcluster.api.model.dto.ClusterCredentialsResponse;
 import com.pgcluster.api.model.dto.ClusterHealthResponse;
 import com.pgcluster.api.model.dto.ClusterListResponse;
 import com.pgcluster.api.model.dto.ClusterResponse;
+import com.pgcluster.api.model.dto.LocationDto;
 import com.pgcluster.api.model.entity.Cluster;
 import com.pgcluster.api.model.entity.User;
 import com.pgcluster.api.model.entity.VpsNode;
@@ -38,6 +40,7 @@ public class ClusterService {
 
     private final ClusterRepository clusterRepository;
     private final VpsNodeRepository vpsNodeRepository;
+    private final HetznerClient hetznerClient;
     @Lazy
     private final ProvisioningService provisioningService;
     private final SshService sshService;
@@ -55,6 +58,65 @@ public class ClusterService {
                 .clusters(responses)
                 .count(responses.size())
                 .build();
+    }
+
+    /**
+     * Get available Hetzner locations for node placement.
+     * Fetches locations from Hetzner API and transforms them with country names and flags.
+     * Also checks which locations have the default server type available.
+     */
+    public List<LocationDto> getAvailableLocations() {
+        return getAvailableLocations("cx23"); // Default server type (must match ClusterCreateRequest default)
+    }
+
+    /**
+     * Get available Hetzner locations for a specific server type.
+     */
+    public List<LocationDto> getAvailableLocations(String serverType) {
+        List<HetznerClient.LocationInfo> hetznerLocations = hetznerClient.getLocations();
+
+        // Get set of locations where the server type is available
+        java.util.Set<String> availableLocations;
+        try {
+            availableLocations = hetznerClient.getAvailableLocationsForServerType(serverType);
+        } catch (Exception e) {
+            log.warn("Failed to check server type availability, marking all as available: {}", e.getMessage());
+            availableLocations = null; // Will mark all as available
+        }
+
+        final java.util.Set<String> finalAvailableLocations = availableLocations;
+
+        return hetznerLocations.stream()
+                .map(loc -> LocationDto.builder()
+                        .id(loc.getName())
+                        .name(loc.getDescription())
+                        .city(loc.getCity())
+                        .country(loc.getCountry())
+                        .countryName(LocationDto.getCountryName(loc.getCountry()))
+                        .flag(LocationDto.getFlag(loc.getCountry()))
+                        .available(finalAvailableLocations == null || finalAvailableLocations.contains(loc.getName()))
+                        .build())
+                .toList();
+    }
+
+    /**
+     * Validate that all requested node regions are available for the server type.
+     */
+    private void validateNodeRegions(List<String> nodeRegions, String serverType) {
+        java.util.Set<String> availableLocations = hetznerClient.getAvailableLocationsForServerType(serverType);
+
+        List<String> unavailableRegions = nodeRegions.stream()
+                .filter(region -> !availableLocations.contains(region))
+                .toList();
+
+        if (!unavailableRegions.isEmpty()) {
+            throw new ApiException(
+                    "The following regions are not available for server type " + serverType + ": " +
+                            String.join(", ", unavailableRegions) +
+                            ". Please select different regions.",
+                    HttpStatus.BAD_REQUEST
+            );
+        }
     }
 
     public ClusterResponse getCluster(UUID id, User user) {
@@ -102,6 +164,9 @@ public class ClusterService {
 
     @Transactional
     public ClusterResponse createCluster(ClusterCreateRequest request, User user) {
+        // Validate that all selected regions are available
+        validateNodeRegions(request.getNodeRegions(), request.getNodeSize());
+
         // Generate slug if not provided
         String slug = request.getSlug();
         if (slug == null || slug.isBlank()) {
@@ -117,6 +182,7 @@ public class ClusterService {
         String postgresPassword = PasswordGenerator.generate(24);
 
         // Create cluster entity (hostname is set later in Phase 6 after DNS creation)
+        // Node regions are passed separately to ProvisioningService - stored in VpsNode.location
         Cluster cluster = Cluster.builder()
                 .user(user)
                 .name(request.getName())
@@ -124,10 +190,13 @@ public class ClusterService {
                 .plan(request.getPlan())
                 .status(Cluster.STATUS_PENDING)
                 .postgresVersion(request.getPostgresVersion())
-                .nodeCount(request.getNodeCount())
+                .nodeCount(3) // Fixed at 3 nodes
                 .nodeSize(request.getNodeSize())
-                .region(request.getRegion())
+                .region(request.getNodeRegions().get(0)) // Store first region as primary for display
                 .postgresPassword(postgresPassword)
+                .nodeRegions(request.getNodeRegions()) // Store all regions for provisioning
+                .provisioningStep(Cluster.STEP_CREATING_SERVERS)
+                .provisioningProgress(1)
                 .build();
 
         cluster = clusterRepository.save(cluster);
@@ -184,7 +253,9 @@ public class ClusterService {
             ClusterHealthResponse.NodeHealth.NodeHealthBuilder healthBuilder =
                     ClusterHealthResponse.NodeHealth.builder()
                             .name(node.getName())
-                            .ip(node.getPublicIp());
+                            .ip(node.getPublicIp())
+                            .location(node.getLocation())
+                            .flag(LocationDto.getFlagForLocation(node.getLocation()));
 
             try {
                 // Query Patroni REST API on each node

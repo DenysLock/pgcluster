@@ -43,6 +43,7 @@ public class ProvisioningService {
     private final PgBackRestService pgBackRestService;
     private final HostKeyVerifier hostKeyVerifier;
     private final PatroniService patroniService;
+    private final ClusterProgressService clusterProgressService;
 
     @Value("${cluster.base-domain}")
     private String baseDomain;
@@ -74,7 +75,7 @@ public class ProvisioningService {
             provisionCluster(cluster);
         } catch (Exception e) {
             log.error("Failed to provision cluster {}: {}", cluster.getSlug(), e.getMessage(), e);
-            updateClusterStatus(cluster.getId(), Cluster.STATUS_ERROR, e.getMessage());
+            clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_ERROR, e.getMessage());
         }
     }
 
@@ -85,14 +86,14 @@ public class ProvisioningService {
     public void provisionCluster(Cluster cluster) {
         log.info("Starting provisioning for cluster: {}", cluster.getSlug());
 
-        updateClusterStatus(cluster.getId(), Cluster.STATUS_CREATING, null);
+        clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_CREATING, null);
 
         // Generate passwords
         String replicatorPassword = PasswordGenerator.generate(24);
 
         // Phase 1: Create VPS nodes with snapshot
         log.info("Phase 1: Creating VPS nodes...");
-        updateClusterProgress(cluster.getId(), Cluster.STEP_CREATING_SERVERS, 1);
+        clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_CREATING_SERVERS, 1);
         List<VpsNode> nodes = createVpsNodes(cluster);
 
         // Clear any stale SSH host keys for these IPs (handles IP recycling)
@@ -102,12 +103,12 @@ public class ProvisioningService {
 
         // Phase 2: Wait for SSH to be available
         log.info("Phase 2: Waiting for SSH on all nodes...");
-        updateClusterProgress(cluster.getId(), Cluster.STEP_WAITING_SSH, 2);
+        clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_WAITING_SSH, 2);
         waitForSsh(nodes);
 
         // Phase 3: Build cluster configuration strings
         log.info("Phase 3: Building cluster configuration...");
-        updateClusterProgress(cluster.getId(), Cluster.STEP_BUILDING_CONFIG, 3);
+        clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_BUILDING_CONFIG, 3);
         String etcdCluster = nodes.stream()
                 .map(n -> n.getName() + "=http://" + n.getPublicIp() + ":2380")
                 .collect(Collectors.joining(","));
@@ -118,7 +119,7 @@ public class ProvisioningService {
 
         // Phase 4a: Upload configs to all nodes
         log.info("Phase 4a: Uploading configs to all nodes...");
-        updateClusterProgress(cluster.getId(), Cluster.STEP_STARTING_CONTAINERS, 4);
+        clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_STARTING_CONTAINERS, 4);
         for (VpsNode node : nodes) {
             uploadNodeConfig(cluster, node, etcdCluster, etcdHosts, replicatorPassword);
         }
@@ -141,7 +142,7 @@ public class ProvisioningService {
 
         // Phase 5: Wait for Patroni cluster to be healthy
         log.info("Phase 5: Waiting for Patroni cluster to be healthy...");
-        updateClusterProgress(cluster.getId(), Cluster.STEP_ELECTING_LEADER, 5);
+        clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_ELECTING_LEADER, 5);
         waitForPatroniCluster(nodes, cluster.getSlug());
 
         // Phase 5b: Initialize pgBackRest if backup is enabled
@@ -167,7 +168,7 @@ public class ProvisioningService {
 
         // Phase 6: Create DNS record pointing to leader
         log.info("Phase 6: Creating DNS record...");
-        updateClusterProgress(cluster.getId(), Cluster.STEP_CREATING_DNS, 6);
+        clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_CREATING_DNS, 6);
         String leaderIp = patroniService.findLeaderIp(nodes);
         createDnsRecord(cluster.getSlug(), leaderIp);
 
@@ -185,18 +186,23 @@ public class ProvisioningService {
     private List<VpsNode> createVpsNodes(Cluster cluster) {
         List<VpsNode> nodes = new ArrayList<>();
         String snapshotId = hetznerClient.getSnapshotId();
+        List<String> nodeRegions = cluster.getNodeRegions();
 
         log.info("Using image/snapshot: {}", snapshotId);
+        log.info("Node regions: {}", nodeRegions);
 
         for (int i = 0; i < cluster.getNodeCount(); i++) {
             String nodeName = String.format("%s-node-%d", cluster.getSlug(), i + 1);
+            String nodeLocation = nodeRegions != null && i < nodeRegions.size()
+                    ? nodeRegions.get(i)
+                    : cluster.getRegion(); // Fallback for backward compatibility
 
             // Create VPS node entity
             VpsNode node = VpsNode.builder()
                     .cluster(cluster)
                     .name(nodeName)
                     .serverType(cluster.getNodeSize())
-                    .location(cluster.getRegion())
+                    .location(nodeLocation)
                     .status(VpsNode.STATUS_CREATING)
                     .role(i == 0 ? "leader" : "replica")
                     .build();
@@ -208,7 +214,7 @@ public class ProvisioningService {
                         .name(nodeName)
                         .serverType(cluster.getNodeSize())
                         .image(snapshotId)
-                        .location(cluster.getRegion())
+                        .location(nodeLocation)
                         .sshKeys(Arrays.asList(hetznerClient.getSshKeyIds()))
                         .labels(Map.of(
                                 "cluster", cluster.getSlug(),
@@ -491,22 +497,66 @@ public class ProvisioningService {
 
     /**
      * Start dependent containers (pgbouncer, postgres-exporter) after patroni is healthy.
+     * Waits for Docker health check to pass before attempting to start.
      */
     private void startDependentContainers(VpsNode node) {
         log.info("Starting dependent containers on {}...", node.getName());
 
+        // First wait for Patroni's Docker health check to pass
+        // This is different from waitForPatroniRestore which checks /patroni endpoint
+        waitForPatroniDockerHealthy(node, 60);
+
         SshService.CommandResult result = sshService.executeCommand(
                 node.getPublicIp(),
                 "cd /opt/pgcluster && docker compose up -d pgbouncer postgres-exporter",
-                60000  // 1 minute timeout
+                120000  // 2 minutes timeout
         );
 
         if (!result.isSuccess()) {
-            log.error("Failed to start dependent containers on {}: {}", node.getName(), result.getStderr());
-            throw new RuntimeException("Failed to start dependent containers on " + node.getName());
+            // Non-critical: containers have restart policy and will eventually start
+            log.warn("Dependent containers didn't start immediately on {} (will retry automatically): {}",
+                    node.getName(), result.getStderr());
+        } else {
+            log.info("Dependent containers started on {}", node.getName());
+        }
+    }
+
+    /**
+     * Wait for Patroni container to be healthy according to Docker health check.
+     * Docker Compose depends_on: condition: service_healthy requires this.
+     */
+    private void waitForPatroniDockerHealthy(VpsNode node, int timeoutSeconds) {
+        int maxAttempts = timeoutSeconds / 2;
+        int attempt = 0;
+
+        log.info("Waiting for Patroni Docker health check on {}...", node.getName());
+
+        while (attempt < maxAttempts) {
+            try {
+                SshService.CommandResult result = sshService.executeCommand(
+                        node.getPublicIp(),
+                        "docker inspect --format='{{.State.Health.Status}}' patroni",
+                        10000
+                );
+
+                if (result.isSuccess()) {
+                    String status = result.getStdout().trim();
+                    if ("healthy".equals(status)) {
+                        log.info("Patroni Docker health check passed after {} attempts", attempt + 1);
+                        return;
+                    }
+                    log.debug("Patroni health status: {} (attempt {}/{})", status, attempt + 1, maxAttempts);
+                }
+
+                Thread.sleep(2000);
+                attempt++;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted while waiting for Patroni health check");
+            }
         }
 
-        log.info("Dependent containers started on {}", node.getName());
+        log.warn("Patroni Docker health check didn't pass within {}s, proceeding anyway", timeoutSeconds);
     }
 
     /**
@@ -989,7 +1039,7 @@ public class ProvisioningService {
             deleteCluster(cluster);
         } catch (Exception e) {
             log.error("Failed to delete cluster {}: {}", cluster.getSlug(), e.getMessage(), e);
-            updateClusterStatus(cluster.getId(), Cluster.STATUS_ERROR, "Deletion failed: " + e.getMessage());
+            clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_ERROR, "Deletion failed: " + e.getMessage());
         }
     }
 
@@ -1031,26 +1081,6 @@ public class ProvisioningService {
         log.info("Cluster {} deleted", cluster.getSlug());
     }
 
-    private void updateClusterStatus(UUID clusterId, String status, String errorMessage) {
-        clusterRepository.findById(clusterId).ifPresent(cluster -> {
-            cluster.setStatus(status);
-            if (errorMessage != null) {
-                cluster.setErrorMessage(errorMessage);
-            }
-            clusterRepository.save(cluster);
-        });
-    }
-
-    private void updateClusterProgress(UUID clusterId, String step, int progress) {
-        clusterRepository.findById(clusterId).ifPresent(cluster -> {
-            cluster.setProvisioningStep(step);
-            cluster.setProvisioningProgress(progress);
-            clusterRepository.save(cluster);
-            log.info("Cluster {} progress: step={} ({}/{})",
-                    cluster.getSlug(), step, progress, Cluster.TOTAL_PROVISIONING_STEPS);
-        });
-    }
-
     /**
      * Provision a new cluster by restoring from a backup.
      *
@@ -1065,7 +1095,7 @@ public class ProvisioningService {
                                              Backup backup, Instant targetTime, RestoreJob job) {
         log.info("Starting restore provisioning: {} -> {}", sourceCluster.getSlug(), targetCluster.getSlug());
 
-        updateClusterStatus(targetCluster.getId(), Cluster.STATUS_CREATING, null);
+        clusterProgressService.updateStatus(targetCluster.getId(), Cluster.STATUS_CREATING, null);
 
         // Generate passwords for new cluster
         String replicatorPassword = PasswordGenerator.generate(24);
@@ -1075,7 +1105,7 @@ public class ProvisioningService {
 
         // Phase 1: Create VPS nodes
         log.info("Phase 1: Creating VPS nodes for restored cluster...");
-        updateClusterProgress(targetCluster.getId(), Cluster.STEP_CREATING_SERVERS, 1);
+        clusterProgressService.updateProgress(targetCluster.getId(), Cluster.STEP_CREATING_SERVERS, 1);
         List<VpsNode> nodes = createVpsNodes(targetCluster);
 
         // Clear any stale SSH host keys for these IPs (handles IP recycling)
@@ -1085,13 +1115,13 @@ public class ProvisioningService {
 
         // Phase 2: Wait for SSH
         log.info("Phase 2: Waiting for SSH on all nodes...");
-        updateClusterProgress(targetCluster.getId(), Cluster.STEP_WAITING_SSH, 2);
+        clusterProgressService.updateProgress(targetCluster.getId(), Cluster.STEP_WAITING_SSH, 2);
         updateRestoreJobProgress(job, "WAITING_SSH", 15);
         waitForSsh(nodes);
 
         // Phase 3: Build cluster configuration
         log.info("Phase 3: Building cluster configuration...");
-        updateClusterProgress(targetCluster.getId(), Cluster.STEP_BUILDING_CONFIG, 3);
+        clusterProgressService.updateProgress(targetCluster.getId(), Cluster.STEP_BUILDING_CONFIG, 3);
         String etcdCluster = nodes.stream()
                 .map(n -> n.getName() + "=http://" + n.getPublicIp() + ":2380")
                 .collect(Collectors.joining(","));
@@ -1101,7 +1131,7 @@ public class ProvisioningService {
 
         // Phase 4a: Upload configs (restore mode - pgBackRest points to source cluster)
         log.info("Phase 4a: Uploading configs (restore mode) to all nodes...");
-        updateClusterProgress(targetCluster.getId(), Cluster.STEP_STARTING_CONTAINERS, 4);
+        clusterProgressService.updateProgress(targetCluster.getId(), Cluster.STEP_STARTING_CONTAINERS, 4);
         updateRestoreJobProgress(job, "CONFIGURING_NODES", 20);
 
         VpsNode firstNode = nodes.get(0);
@@ -1155,7 +1185,7 @@ public class ProvisioningService {
 
         // Wait for full cluster health
         log.info("Phase 5b: Waiting for cluster to be fully healthy...");
-        updateClusterProgress(targetCluster.getId(), Cluster.STEP_ELECTING_LEADER, 5);
+        clusterProgressService.updateProgress(targetCluster.getId(), Cluster.STEP_ELECTING_LEADER, 5);
         waitForPatroniCluster(nodes, targetCluster.getSlug());
 
         // Phase 5c: Reconfigure pgBackRest for NEW cluster's repository
@@ -1184,7 +1214,7 @@ public class ProvisioningService {
 
         // Phase 6: Create DNS record
         log.info("Phase 6: Creating DNS record...");
-        updateClusterProgress(targetCluster.getId(), Cluster.STEP_CREATING_DNS, 6);
+        clusterProgressService.updateProgress(targetCluster.getId(), Cluster.STEP_CREATING_DNS, 6);
         updateRestoreJobProgress(job, "CREATING_DNS", 95);
         String leaderIp = patroniService.findLeaderIp(nodes);
         createDnsRecord(targetCluster.getSlug(), leaderIp);

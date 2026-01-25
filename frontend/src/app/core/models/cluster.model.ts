@@ -106,6 +106,8 @@ export interface NodeHealth {
   state: string | null;
   reachable: boolean;
   lagBytes: number | null;
+  location: string | null;  // e.g., "fsn1", "hel1"
+  flag: string | null;      // e.g., "🇩🇪", "🇫🇮"
 }
 
 // Health response from backend
@@ -119,10 +121,18 @@ export interface ClusterHealth {
 
 export interface CreateClusterRequest {
   name: string;
-  nodeCount: number;
-  nodeSize: string;
-  region: string;
-  postgresVersion: string;
+  nodeRegions: string[];  // ["fsn1", "hel1", "nbg1"]
+}
+
+// Hetzner location info
+export interface Location {
+  id: string;       // "fsn1"
+  name: string;     // "Falkenstein DC Park 1"
+  city: string;     // "Falkenstein"
+  country: string;  // "DE"
+  countryName: string; // "Germany"
+  flag: string;     // "🇩🇪"
+  available: boolean; // true if server type is available at this location
 }
 
 // Helper to convert API response to Cluster

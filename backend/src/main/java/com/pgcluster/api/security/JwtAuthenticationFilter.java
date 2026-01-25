@@ -32,6 +32,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
+        // Skip JWT processing for internal endpoints (use API key auth instead)
+        String requestUri = request.getRequestURI();
+        if (requestUri.startsWith("/internal/") || requestUri.startsWith("/actuator/")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         try {
             String jwt = getJwtFromRequest(request);
 

@@ -142,6 +142,7 @@ interface ProvisioningStep {
                   <thead>
                     <tr class="border-b border-border bg-bg-tertiary">
                       <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Node</th>
+                      <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Location</th>
                       <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Role</th>
                       <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">IP Address</th>
                       <th class="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">State</th>
@@ -152,6 +153,12 @@ interface ProvisioningStep {
                     @for (node of health()?.nodes || []; track node.name) {
                       <tr class="border-b border-border last:border-0 hover:bg-bg-tertiary transition-colors">
                         <td class="px-4 py-3 font-medium text-foreground">{{ node.name }}</td>
+                        <td class="px-4 py-3">
+                          <span class="flex items-center gap-2">
+                            <span class="text-base">{{ node.flag || '🌍' }}</span>
+                            <span class="text-sm text-muted-foreground uppercase">{{ node.location || '-' }}</span>
+                          </span>
+                        </td>
                         <td class="px-4 py-3">
                           <span [class]="getRoleClass(node.role)" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase">
                             {{ node.role || 'unknown' }}

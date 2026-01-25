@@ -6,6 +6,7 @@ import com.pgcluster.api.model.dto.ClusterHealthResponse;
 import com.pgcluster.api.model.dto.ClusterListResponse;
 import com.pgcluster.api.model.dto.ClusterMetricsResponse;
 import com.pgcluster.api.model.dto.ClusterResponse;
+import com.pgcluster.api.model.dto.LocationDto;
 import com.pgcluster.api.model.entity.User;
 import com.pgcluster.api.service.ClusterService;
 import com.pgcluster.api.service.MetricsService;
@@ -19,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -37,6 +39,13 @@ public class ClusterController {
     public ResponseEntity<ClusterListResponse> listClusters(@AuthenticationPrincipal User user) {
         ClusterListResponse response = clusterService.listClusters(user);
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/locations")
+    @Operation(summary = "Get available Hetzner locations for node placement")
+    public ResponseEntity<List<LocationDto>> getLocations() {
+        List<LocationDto> locations = clusterService.getAvailableLocations();
+        return ResponseEntity.ok(locations);
     }
 
     @GetMapping("/{id}")

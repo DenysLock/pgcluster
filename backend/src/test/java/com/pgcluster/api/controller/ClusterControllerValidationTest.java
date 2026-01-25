@@ -20,6 +20,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -47,6 +50,9 @@ class ClusterControllerValidationTest {
     private User user;
     private String userToken;
 
+    // Valid node regions for testing
+    private static final List<String> VALID_NODE_REGIONS = Arrays.asList("fsn1", "nbg1", "hel1");
+
     @BeforeEach
     void setUp() {
         user = User.builder()
@@ -69,9 +75,8 @@ class ClusterControllerValidationTest {
         void shouldRejectEmptyName() throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName("");
-            request.setNodeCount(3);
             request.setNodeSize("cx23");
-            request.setRegion("fsn1");
+            request.setNodeRegions(VALID_NODE_REGIONS);
 
             mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)
@@ -86,9 +91,8 @@ class ClusterControllerValidationTest {
         void shouldRejectNullName() throws Exception {
             String json = """
                 {
-                    "nodeCount": 3,
                     "nodeSize": "cx23",
-                    "region": "fsn1"
+                    "nodeRegions": ["fsn1", "nbg1", "hel1"]
                 }
                 """;
 
@@ -104,10 +108,9 @@ class ClusterControllerValidationTest {
         @DisplayName("should reject name exceeding max length")
         void shouldRejectNameExceedingMaxLength() throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
-            request.setName("a".repeat(101)); // 101 chars, max is 100
-            request.setNodeCount(3);
+            request.setName("a".repeat(51)); // 51 chars, max is 50
             request.setNodeSize("cx23");
-            request.setRegion("fsn1");
+            request.setNodeRegions(VALID_NODE_REGIONS);
 
             mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)
@@ -119,54 +122,67 @@ class ClusterControllerValidationTest {
     }
 
     @Nested
-    @DisplayName("POST /api/v1/clusters - Node Count Validation")
-    class NodeCountValidation {
+    @DisplayName("POST /api/v1/clusters - Node Regions Validation")
+    class NodeRegionsValidation {
 
         @Test
-        @DisplayName("should reject node count less than 1")
-        void shouldRejectNodeCountLessThan1() throws Exception {
+        @DisplayName("should reject null node regions")
+        void shouldRejectNullNodeRegions() throws Exception {
+            String json = """
+                {
+                    "name": "Test Cluster",
+                    "nodeSize": "cx23"
+                }
+                """;
+
+            mockMvc.perform(post("/api/v1/clusters")
+                            .header("Authorization", "Bearer " + userToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(json))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.errors.nodeRegions", notNullValue()));
+        }
+
+        @Test
+        @DisplayName("should reject less than 3 node regions")
+        void shouldRejectLessThan3NodeRegions() throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName("Test Cluster");
-            request.setNodeCount(0);
             request.setNodeSize("cx23");
-            request.setRegion("fsn1");
+            request.setNodeRegions(Arrays.asList("fsn1", "nbg1")); // Only 2
 
             mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isBadRequest())
-                    .andExpect(jsonPath("$.errors.nodeCount", notNullValue()));
+                    .andExpect(jsonPath("$.errors.nodeRegions", notNullValue()));
         }
 
         @Test
-        @DisplayName("should reject node count greater than 9")
-        void shouldRejectNodeCountGreaterThan9() throws Exception {
+        @DisplayName("should reject more than 3 node regions")
+        void shouldRejectMoreThan3NodeRegions() throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName("Test Cluster");
-            request.setNodeCount(10);
             request.setNodeSize("cx23");
-            request.setRegion("fsn1");
+            request.setNodeRegions(Arrays.asList("fsn1", "nbg1", "hel1", "ash")); // 4
 
             mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isBadRequest())
-                    .andExpect(jsonPath("$.errors.nodeCount", notNullValue()));
+                    .andExpect(jsonPath("$.errors.nodeRegions", notNullValue()));
         }
 
-        @ParameterizedTest
-        @ValueSource(ints = {1, 3, 5, 7, 9})
-        @DisplayName("should accept valid node counts (passes validation)")
-        void shouldAcceptValidNodeCounts(int nodeCount) throws Exception {
+        @Test
+        @DisplayName("should accept exactly 3 node regions (passes validation)")
+        void shouldAcceptExactly3NodeRegions() throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
-            request.setName("Test Cluster " + nodeCount);
-            request.setNodeCount(nodeCount);
+            request.setName("Test Cluster");
             request.setNodeSize("cx23");
-            request.setRegion("fsn1");
+            request.setNodeRegions(Arrays.asList("fsn1", "nbg1", "hel1"));
 
-            // We only check that it doesn't return 400 (validation error)
             MvcResult result = mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)
                             .contentType(MediaType.APPLICATION_JSON)
@@ -188,9 +204,8 @@ class ClusterControllerValidationTest {
         void shouldRejectInvalidNodeSizes(String nodeSize) throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName("Test Cluster");
-            request.setNodeCount(3);
             request.setNodeSize(nodeSize);
-            request.setRegion("fsn1");
+            request.setNodeRegions(VALID_NODE_REGIONS);
 
             mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)
@@ -206,51 +221,8 @@ class ClusterControllerValidationTest {
         void shouldAcceptValidNodeSizes(String nodeSize) throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName("Test Cluster " + nodeSize);
-            request.setNodeCount(3);
             request.setNodeSize(nodeSize);
-            request.setRegion("fsn1");
-
-            MvcResult result = mockMvc.perform(post("/api/v1/clusters")
-                            .header("Authorization", "Bearer " + userToken)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(request)))
-                    .andReturn();
-
-            assertThat(result.getResponse().getStatus()).isNotEqualTo(400);
-        }
-    }
-
-    @Nested
-    @DisplayName("POST /api/v1/clusters - Region Validation")
-    class RegionValidation {
-
-        @ParameterizedTest
-        @ValueSource(strings = {"invalid", "us-west", "europe", "asia-1"})
-        @DisplayName("should reject invalid regions")
-        void shouldRejectInvalidRegions(String region) throws Exception {
-            ClusterCreateRequest request = new ClusterCreateRequest();
-            request.setName("Test Cluster");
-            request.setNodeCount(3);
-            request.setNodeSize("cx23");
-            request.setRegion(region);
-
-            mockMvc.perform(post("/api/v1/clusters")
-                            .header("Authorization", "Bearer " + userToken)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(request)))
-                    .andExpect(status().isBadRequest())
-                    .andExpect(jsonPath("$.errors.region", notNullValue()));
-        }
-
-        @ParameterizedTest
-        @ValueSource(strings = {"fsn1", "nbg1", "hel1", "ash", "hil"})
-        @DisplayName("should accept valid regions (passes validation)")
-        void shouldAcceptValidRegions(String region) throws Exception {
-            ClusterCreateRequest request = new ClusterCreateRequest();
-            request.setName("Test Cluster " + region);
-            request.setNodeCount(3);
-            request.setNodeSize("cx23");
-            request.setRegion(region);
+            request.setNodeRegions(VALID_NODE_REGIONS);
 
             MvcResult result = mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)
@@ -272,9 +244,8 @@ class ClusterControllerValidationTest {
         void shouldRejectInvalidVersions(String version) throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName("Test Cluster");
-            request.setNodeCount(3);
             request.setNodeSize("cx23");
-            request.setRegion("fsn1");
+            request.setNodeRegions(VALID_NODE_REGIONS);
             request.setPostgresVersion(version);
 
             mockMvc.perform(post("/api/v1/clusters")
@@ -291,9 +262,8 @@ class ClusterControllerValidationTest {
         void shouldAcceptValidVersions(String version) throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName("Test Cluster v" + version);
-            request.setNodeCount(3);
             request.setNodeSize("cx23");
-            request.setRegion("fsn1");
+            request.setNodeRegions(VALID_NODE_REGIONS);
             request.setPostgresVersion(version);
 
             MvcResult result = mockMvc.perform(post("/api/v1/clusters")
@@ -315,9 +285,8 @@ class ClusterControllerValidationTest {
         void shouldReturnAllValidationErrors() throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName(""); // invalid
-            request.setNodeCount(100); // invalid
             request.setNodeSize("invalid"); // invalid
-            request.setRegion("invalid"); // invalid
+            request.setNodeRegions(Arrays.asList("fsn1")); // invalid - needs 3
 
             mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)

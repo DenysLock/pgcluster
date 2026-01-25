@@ -103,6 +103,31 @@ public class HetznerClient {
     }
 
     /**
+     * Get available locations/datacenters
+     */
+    @CircuitBreaker(name = "hetzner")
+    @Retry(name = "hetzner")
+    public List<LocationInfo> getLocations() {
+        HttpHeaders headers = createHeaders();
+        HttpEntity<?> entity = new HttpEntity<>(headers);
+
+        log.info("Fetching Hetzner locations");
+
+        ResponseEntity<LocationListResponse> response = restTemplate.exchange(
+                BASE_URL + "/locations",
+                HttpMethod.GET,
+                entity,
+                LocationListResponse.class
+        );
+
+        if (response.getBody() != null && response.getBody().getLocations() != null) {
+            log.info("Found {} locations", response.getBody().getLocations().size());
+            return response.getBody().getLocations();
+        }
+        throw new RuntimeException("Failed to fetch locations");
+    }
+
+    /**
      * Assign floating IP to server
      */
     public void assignFloatingIp(Long floatingIpId, Long serverId) {
@@ -242,5 +267,100 @@ public class HetznerClient {
         private String name;
         private String city;
         private String country;
+    }
+
+    /**
+     * Get server type details including location availability
+     */
+    @CircuitBreaker(name = "hetzner")
+    @Retry(name = "hetzner")
+    public ServerTypeInfo getServerType(String serverTypeName) {
+        HttpHeaders headers = createHeaders();
+        HttpEntity<?> entity = new HttpEntity<>(headers);
+
+        log.info("Fetching server type info for: {}", serverTypeName);
+
+        ResponseEntity<ServerTypeListResponse> response = restTemplate.exchange(
+                BASE_URL + "/server_types?name=" + serverTypeName,
+                HttpMethod.GET,
+                entity,
+                ServerTypeListResponse.class
+        );
+
+        if (response.getBody() != null && response.getBody().getServerTypes() != null
+                && !response.getBody().getServerTypes().isEmpty()) {
+            return response.getBody().getServerTypes().get(0);
+        }
+        throw new RuntimeException("Server type not found: " + serverTypeName);
+    }
+
+    /**
+     * Get set of location names where a server type is available
+     */
+    public java.util.Set<String> getAvailableLocationsForServerType(String serverTypeName) {
+        ServerTypeInfo serverType = getServerType(serverTypeName);
+        java.util.Set<String> availableLocations = new java.util.HashSet<>();
+
+        if (serverType.getPrices() != null) {
+            for (ServerTypePrice price : serverType.getPrices()) {
+                if (price.getLocation() != null) {
+                    availableLocations.add(price.getLocation());
+                }
+            }
+        }
+
+        log.info("Server type {} is available in {} locations: {}",
+                serverTypeName, availableLocations.size(), availableLocations);
+        return availableLocations;
+    }
+
+    // Location API DTOs
+    @Data
+    public static class LocationListResponse {
+        private List<LocationInfo> locations;
+    }
+
+    @Data
+    public static class LocationInfo {
+        private Long id;
+        private String name;        // "fsn1"
+        private String description; // "Falkenstein DC Park 1"
+        private String country;     // "DE"
+        private String city;        // "Falkenstein"
+        @JsonProperty("network_zone")
+        private String networkZone; // "eu-central"
+    }
+
+    // Server Type API DTOs
+    @Data
+    public static class ServerTypeListResponse {
+        @JsonProperty("server_types")
+        private List<ServerTypeInfo> serverTypes;
+    }
+
+    @Data
+    public static class ServerTypeInfo {
+        private Long id;
+        private String name;
+        private String description;
+        private int cores;
+        private int memory;       // in MB
+        private int disk;         // in GB
+        private List<ServerTypePrice> prices;
+    }
+
+    @Data
+    public static class ServerTypePrice {
+        private String location;  // "fsn1"
+        @JsonProperty("price_hourly")
+        private PriceDetail priceHourly;
+        @JsonProperty("price_monthly")
+        private PriceDetail priceMonthly;
+    }
+
+    @Data
+    public static class PriceDetail {
+        private String net;
+        private String gross;
     }
 }
