@@ -56,6 +56,27 @@ public class MetricsService {
             "30m", 1800
     );
 
+    // Server type to disk size in GB (for Database Size limit display)
+    private static final Map<String, Integer> SERVER_TYPE_DISK_GB = Map.ofEntries(
+            Map.entry("cx22", 40),
+            Map.entry("cx23", 40),
+            Map.entry("cx32", 80),
+            Map.entry("cx33", 80),
+            Map.entry("cx42", 160),
+            Map.entry("cx43", 160),
+            Map.entry("cx52", 320),
+            Map.entry("cx53", 320),
+            Map.entry("cpx11", 40),
+            Map.entry("cpx21", 80),
+            Map.entry("cpx31", 160),
+            Map.entry("cpx41", 320),
+            Map.entry("cpx51", 640),
+            Map.entry("cax11", 40),
+            Map.entry("cax21", 80),
+            Map.entry("cax31", 160),
+            Map.entry("cax41", 320)
+    );
+
     /**
      * Get metrics for a cluster
      *
@@ -90,6 +111,10 @@ public class MetricsService {
 
         log.debug("Fetching metrics for cluster {} ({}), range={}, step={}", slug, clusterId, range, step);
 
+        // Get disk limit based on node size
+        String nodeSize = cluster.getNodeSize();
+        Long diskLimitBytes = SERVER_TYPE_DISK_GB.getOrDefault(nodeSize, 40) * 1024L * 1024L * 1024L;
+
         return ClusterMetricsResponse.builder()
                 .clusterId(clusterId.toString())
                 .clusterSlug(slug)
@@ -102,6 +127,11 @@ public class MetricsService {
                 .connections(queryMetric(buildConnectionsQuery(slug), start, end, step))
                 .qps(queryMetric(buildQpsQuery(slug), start, end, step))
                 .replicationLag(queryMetric(buildReplicationLagQuery(slug), start, end, step))
+                .cacheHitRatio(queryMetric(buildCacheHitRatioQuery(slug), start, end, step))
+                .databaseSize(queryMetric(buildDatabaseSizeQuery(slug), start, end, step))
+                .deadlocks(queryMetric(buildDeadlocksQuery(slug), start, end, step))
+                .diskSpaceUsed(queryMetric(buildDiskSpaceUsedQuery(slug), start, end, step))
+                .diskLimitBytes(diskLimitBytes)
                 .build();
     }
 
@@ -226,6 +256,44 @@ public class MetricsService {
         return String.format(
                 "pg_replication_lag_seconds{cluster_slug=\"%s\",node_role=\"replica\"}",
                 escaped
+        );
+    }
+
+    // ============ New Metric Query Builders ============
+
+    private String buildCacheHitRatioQuery(String slug) {
+        String escaped = prometheusClient.escapeLabel(slug);
+        // Cache hit ratio: percentage of blocks found in shared_buffers vs read from disk
+        return String.format(
+                "100 * pg_stat_database_blks_hit{cluster_slug=\"%s\",datname=\"postgres\"} / " +
+                "(pg_stat_database_blks_hit{cluster_slug=\"%s\",datname=\"postgres\"} + " +
+                "pg_stat_database_blks_read{cluster_slug=\"%s\",datname=\"postgres\"})",
+                escaped, escaped, escaped
+        );
+    }
+
+    private String buildDatabaseSizeQuery(String slug) {
+        String escaped = prometheusClient.escapeLabel(slug);
+        return String.format(
+                "pg_database_size_bytes{cluster_slug=\"%s\",datname=\"postgres\"}",
+                escaped
+        );
+    }
+
+    private String buildDeadlocksQuery(String slug) {
+        String escaped = prometheusClient.escapeLabel(slug);
+        return String.format(
+                "rate(pg_stat_database_deadlocks{cluster_slug=\"%s\",datname=\"postgres\"}[5m])",
+                escaped
+        );
+    }
+
+    private String buildDiskSpaceUsedQuery(String slug) {
+        String escaped = prometheusClient.escapeLabel(slug);
+        return String.format(
+                "node_filesystem_size_bytes{mountpoint=\"/\",cluster_slug=\"%s\"} - " +
+                "node_filesystem_avail_bytes{mountpoint=\"/\",cluster_slug=\"%s\"}",
+                escaped, escaped
         );
     }
 }

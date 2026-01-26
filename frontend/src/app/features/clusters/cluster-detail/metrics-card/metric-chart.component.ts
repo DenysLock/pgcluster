@@ -22,7 +22,10 @@ import { MetricSeries } from '../../../../core/models';
         <h4 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ title }}</h4>
         @if (currentValue !== null) {
           <span class="text-lg font-semibold tabular-nums text-foreground">
-            {{ formatValue(currentValue) }}{{ unit ? ' ' + unit : '' }}
+            {{ formatValue(currentValue) }}{{ getUnitDisplay() }}
+            @if (diskLimitBytes) {
+              <span class="text-muted-foreground text-sm font-normal">/ {{ formatBytes(diskLimitBytes) }}</span>
+            }
           </span>
         }
       </div>
@@ -66,6 +69,7 @@ export class MetricChartComponent implements AfterViewInit, OnChanges, OnDestroy
   @Input() unit: string = '';
   @Input() series: MetricSeries[] = [];
   @Input() maxValue?: number;
+  @Input() diskLimitBytes?: number;  // For "X / Y GB" display on Database Size
 
   @ViewChild('chartContainer') chartContainer!: ElementRef<HTMLDivElement>;
 
@@ -120,6 +124,9 @@ export class MetricChartComponent implements AfterViewInit, OnChanges, OnDestroy
       rightPriceScale: {
         borderVisible: false,
         scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      localization: {
+        priceFormatter: (price: number) => this.formatAxisValue(price),
       },
       timeScale: {
         borderVisible: false,
@@ -201,15 +208,34 @@ export class MetricChartComponent implements AfterViewInit, OnChanges, OnDestroy
     return value.toFixed(1);
   }
 
-  private formatBytes(bytes: number): string {
-    if (bytes === 0) return '0';
+  formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(Math.abs(bytes)) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
+  getUnitDisplay(): string {
+    // Don't show unit suffix for bytes (already included in formatBytes)
+    if (this.unit === 'bytes') return '';
+    return this.unit ? ' ' + this.unit : '';
+  }
+
   allSeriesEmpty(): boolean {
     return this.series.every(s => s.data.length === 0);
+  }
+
+  formatAxisValue(value: number): string {
+    if (this.unit === 'bytes') {
+      return this.formatBytes(value);
+    }
+    if (value >= 1000000) {
+      return (value / 1000000).toFixed(1) + 'M';
+    }
+    if (value >= 1000) {
+      return (value / 1000).toFixed(1) + 'k';
+    }
+    return value.toFixed(1);
   }
 }

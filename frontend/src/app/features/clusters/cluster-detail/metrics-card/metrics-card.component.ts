@@ -62,6 +62,7 @@ import { MetricChartComponent } from './metric-chart.component';
         } @else if (metrics()) {
           <!-- Charts Grid -->
           <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <!-- Row 1: System metrics -->
             <app-metric-chart
               title="CPU Usage"
               unit="%"
@@ -80,6 +81,26 @@ import { MetricChartComponent } from './metric-chart.component';
               [series]="metrics()!.disk"
               [maxValue]="100"
             />
+            <!-- Row 2: Storage metrics -->
+            <app-metric-chart
+              title="Disk Space"
+              unit="bytes"
+              [series]="metrics()!.diskSpaceUsed"
+              [diskLimitBytes]="metrics()!.diskLimitBytes"
+            />
+            <app-metric-chart
+              title="Database Size"
+              unit="bytes"
+              [series]="metrics()!.databaseSize"
+              [diskLimitBytes]="metrics()!.diskLimitBytes"
+            />
+            <app-metric-chart
+              title="Cache Hit Ratio"
+              unit="%"
+              [series]="metrics()!.cacheHitRatio"
+              [maxValue]="100"
+            />
+            <!-- Row 3: Connection metrics -->
             <app-metric-chart
               title="Active Connections"
               unit=""
@@ -90,6 +111,12 @@ import { MetricChartComponent } from './metric-chart.component';
               unit="qps"
               [series]="metrics()!.qps"
             />
+            <app-metric-chart
+              title="Deadlocks"
+              unit="/s"
+              [series]="metrics()!.deadlocks"
+            />
+            <!-- Row 4: Replication -->
             <app-metric-chart
               title="Replication Lag"
               unit="s"
@@ -213,7 +240,11 @@ export class MetricsCardComponent implements OnInit, OnDestroy {
       m.disk.length === 0 &&
       m.connections.length === 0 &&
       m.qps.length === 0 &&
-      m.replicationLag.length === 0
+      m.replicationLag.length === 0 &&
+      m.cacheHitRatio.length === 0 &&
+      m.databaseSize.length === 0 &&
+      m.deadlocks.length === 0 &&
+      m.diskSpaceUsed.length === 0
     );
   }
 }

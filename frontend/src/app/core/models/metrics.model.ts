@@ -32,6 +32,12 @@ export interface ClusterMetrics {
   connections: MetricSeries[];
   qps: MetricSeries[];
   replicationLag: MetricSeries[];
+  // New metrics
+  cacheHitRatio: MetricSeries[];
+  databaseSize: MetricSeries[];
+  deadlocks: MetricSeries[];
+  diskSpaceUsed: MetricSeries[];  // Bytes used on disk
+  diskLimitBytes?: number;  // For "X / Y GB" display based on server type
 }
 
 /**

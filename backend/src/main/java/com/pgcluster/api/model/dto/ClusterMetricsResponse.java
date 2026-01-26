@@ -31,6 +31,13 @@ public class ClusterMetricsResponse {
     private List<MetricSeries> qps;
     private List<MetricSeries> replicationLag;
 
+    // New metrics
+    private List<MetricSeries> cacheHitRatio;
+    private List<MetricSeries> databaseSize;
+    private List<MetricSeries> deadlocks;
+    private List<MetricSeries> diskSpaceUsed;  // Bytes used on disk (vs diskLimitBytes)
+    private Long diskLimitBytes;  // For "X / Y GB" display based on server type
+
     /**
      * A single time-series for one node
      */
