@@ -23,8 +23,8 @@ public class ClusterCreateRequest {
     @Pattern(regexp = "^(14|15|16|17)$", message = "PostgreSQL version must be 14, 15, 16, or 17")
     private String postgresVersion = "16";
 
-    @Pattern(regexp = "^(cx[2345]3|cpx[123]1|cpx[345]1|cax[123]1)$",
-            message = "Invalid node size. Allowed: cx23, cx33, cx43, cx53, cpx11, cpx21, cpx31, cpx41, cpx51, cax11, cax21, cax31")
+    @Pattern(regexp = "^(cx[2345]3|ccx[123456]3|cpx[123]1|cpx[345]1|cax[123]1)$",
+            message = "Invalid node size. Allowed: cx23, cx33, cx43, cx53, ccx13, ccx23, ccx33, ccx43, ccx53, ccx63")
     private String nodeSize = "cx23";
 
     @NotNull(message = "Node regions are required")

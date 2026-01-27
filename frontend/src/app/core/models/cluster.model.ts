@@ -121,7 +121,23 @@ export interface ClusterHealth {
 
 export interface CreateClusterRequest {
   name: string;
+  nodeSize: string;       // "cx23", "ccx13", etc.
   nodeRegions: string[];  // ["fsn1", "hel1", "nbg1"]
+}
+
+// Server type with specs and availability
+export interface ServerType {
+  name: string;
+  cores: number;
+  memory: number;  // GB
+  disk: number;    // GB
+  availableLocations: string[];
+}
+
+// Response from /api/v1/clusters/server-types
+export interface ServerTypesResponse {
+  shared: ServerType[];
+  dedicated: ServerType[];
 }
 
 // Hetzner location info

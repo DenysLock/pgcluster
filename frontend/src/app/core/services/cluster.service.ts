@@ -10,6 +10,7 @@ import {
   ClusterListResponse,
   ClusterApiResponse,
   Location,
+  ServerTypesResponse,
   toCluster
 } from '../models';
 
@@ -34,9 +35,18 @@ export class ClusterService {
 
   /**
    * Fetch available Hetzner locations for node placement.
+   * @param serverType Optional server type to check availability for (defaults to cx23)
    */
-  getLocations(): Observable<Location[]> {
-    return this.http.get<Location[]>(`${environment.apiUrl}/api/v1/clusters/locations`);
+  getLocations(serverType?: string): Observable<Location[]> {
+    const params = serverType ? `?serverType=${serverType}` : '';
+    return this.http.get<Location[]>(`${environment.apiUrl}/api/v1/clusters/locations${params}`);
+  }
+
+  /**
+   * Fetch available server types with specs and availability per location.
+   */
+  getServerTypes(): Observable<ServerTypesResponse> {
+    return this.http.get<ServerTypesResponse>(`${environment.apiUrl}/api/v1/clusters/server-types`);
   }
 
   getCluster(id: string): Observable<Cluster> {

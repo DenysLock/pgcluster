@@ -7,6 +7,7 @@ import com.pgcluster.api.model.dto.ClusterListResponse;
 import com.pgcluster.api.model.dto.ClusterMetricsResponse;
 import com.pgcluster.api.model.dto.ClusterResponse;
 import com.pgcluster.api.model.dto.LocationDto;
+import com.pgcluster.api.model.dto.ServerTypesResponse;
 import com.pgcluster.api.model.entity.User;
 import com.pgcluster.api.service.ClusterService;
 import com.pgcluster.api.service.MetricsService;
@@ -43,9 +44,17 @@ public class ClusterController {
 
     @GetMapping("/locations")
     @Operation(summary = "Get available Hetzner locations for node placement")
-    public ResponseEntity<List<LocationDto>> getLocations() {
-        List<LocationDto> locations = clusterService.getAvailableLocations();
+    public ResponseEntity<List<LocationDto>> getLocations(
+            @RequestParam(defaultValue = "cx23") String serverType) {
+        List<LocationDto> locations = clusterService.getAvailableLocations(serverType);
         return ResponseEntity.ok(locations);
+    }
+
+    @GetMapping("/server-types")
+    @Operation(summary = "Get available server types with specs and availability")
+    public ResponseEntity<ServerTypesResponse> getServerTypes() {
+        ServerTypesResponse response = clusterService.getServerTypes();
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/{id}")

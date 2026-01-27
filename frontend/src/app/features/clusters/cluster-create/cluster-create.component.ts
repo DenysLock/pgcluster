@@ -1,16 +1,17 @@
-import { Component, OnInit, signal, HostListener, ElementRef } from '@angular/core';
+import { Component, OnInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
 import { ClusterService } from '../../../core/services/cluster.service';
-import { Location } from '../../../core/models';
+import { NotificationService } from '../../../core/services/notification.service';
+import { Location, ServerType, ServerTypesResponse } from '../../../core/models';
 
 @Component({
   selector: 'app-cluster-create',
   standalone: true,
   imports: [CommonModule, ReactiveFormsModule, RouterLink],
   template: `
-    <div class="max-w-2xl mx-auto space-y-6">
+    <div class="max-w-3xl mx-auto space-y-6">
       <!-- Header -->
       <div>
         <h1 class="text-xl font-semibold uppercase tracking-wider text-foreground">Create Cluster</h1>
@@ -19,12 +20,6 @@ import { Location } from '../../../core/models';
 
       <!-- Form -->
       <div class="card">
-        @if (error()) {
-          <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 mb-6 text-sm">
-            {{ error() }}
-          </div>
-        }
-
         <form [formGroup]="form" (ngSubmit)="onSubmit()" class="space-y-6">
           <!-- Cluster Name -->
           <div class="space-y-2">
@@ -51,11 +46,81 @@ import { Location } from '../../../core/models';
             }
           </div>
 
-          <!-- Node Locations -->
+          <!-- Server Type Selection -->
+          <div class="space-y-4">
+            <label class="label">Server Type</label>
+
+            @if (serverTypesLoading()) {
+              <div class="flex items-center gap-2 text-muted-foreground py-4">
+                <span class="spinner w-4 h-4"></span>
+                <span>Loading server types...</span>
+              </div>
+            } @else if (serverTypesError()) {
+              <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 text-sm">
+                {{ serverTypesError() }}
+              </div>
+            } @else {
+              <!-- Category Tabs -->
+              <div class="flex gap-2 mb-4">
+                <button
+                  type="button"
+                  (click)="selectCategory('shared')"
+                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
+                  [class.bg-neon-green]="selectedCategory() === 'shared'"
+                  [class.text-bg-primary]="selectedCategory() === 'shared'"
+                  [class.border-neon-green]="selectedCategory() === 'shared'"
+                  [class.bg-transparent]="selectedCategory() !== 'shared'"
+                  [class.text-muted-foreground]="selectedCategory() !== 'shared'"
+                  [class.border-border]="selectedCategory() !== 'shared'"
+                  [class.hover:border-muted-foreground]="selectedCategory() !== 'shared'"
+                >
+                  Shared vCPU
+                </button>
+                <button
+                  type="button"
+                  (click)="selectCategory('dedicated')"
+                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
+                  [class.bg-neon-green]="selectedCategory() === 'dedicated'"
+                  [class.text-bg-primary]="selectedCategory() === 'dedicated'"
+                  [class.border-neon-green]="selectedCategory() === 'dedicated'"
+                  [class.bg-transparent]="selectedCategory() !== 'dedicated'"
+                  [class.text-muted-foreground]="selectedCategory() !== 'dedicated'"
+                  [class.border-border]="selectedCategory() !== 'dedicated'"
+                  [class.hover:border-muted-foreground]="selectedCategory() !== 'dedicated'"
+                >
+                  Dedicated vCPU
+                </button>
+              </div>
+
+              <!-- Server Type Cards -->
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                @for (type of currentServerTypes(); track type.name) {
+                  <button
+                    type="button"
+                    (click)="selectServerType(type)"
+                    [ngClass]="getServerTypeClass(type)"
+                    [disabled]="!isAvailable(type)"
+                  >
+                    <div class="font-semibold text-foreground mb-1">{{ type.name }}</div>
+                    <div class="text-xs text-muted-foreground space-y-0.5">
+                      <div>{{ type.cores }} vCPU</div>
+                      <div>{{ type.memory }} GB RAM</div>
+                      <div>{{ type.disk }} GB SSD</div>
+                    </div>
+                    <div class="mt-2" [class.hidden]="isAvailable(type)">
+                      <span class="text-xs uppercase tracking-wider text-status-error border border-status-error px-2 py-0.5">Unavailable</span>
+                    </div>
+                  </button>
+                }
+              </div>
+            }
+          </div>
+
+          <!-- Node Locations as Button Grid -->
           <div class="space-y-4">
             <label class="label">Node Locations</label>
             <p class="text-xs text-muted-foreground -mt-2">
-              Select a region for each of the 3 nodes. You can distribute nodes across different regions for better availability.
+              Select a region for each node. Grayed buttons are unavailable for the selected server type.
             </p>
 
             @if (locationsLoading()) {
@@ -68,90 +133,23 @@ import { Location } from '../../../core/models';
                 {{ locationsError() }}
               </div>
             } @else {
-              <div class="space-y-3">
+              <div class="space-y-4">
                 @for (nodeIndex of [0, 1, 2]; track nodeIndex) {
-                  <div class="flex items-center gap-4">
-                    <!-- Node label -->
-                    <div class="w-20 flex-shrink-0">
-                      <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Node {{ nodeIndex + 1 }}</span>
-                    </div>
-
-                    <!-- Custom dropdown -->
-                    <div class="relative flex-1">
-                      <!-- Trigger button -->
-                      <button
-                        type="button"
-                        (click)="toggleDropdown(nodeIndex, $event)"
-                        class="w-full px-4 py-3 bg-bg-tertiary border text-left flex items-center justify-between transition-colors"
-                        [class.border-neon-green]="openDropdown() === nodeIndex"
-                        [class.border-status-error]="getSelectedLocation(nodeIndex) && !getSelectedLocation(nodeIndex)?.available"
-                        [class.border-border]="openDropdown() !== nodeIndex && (!getSelectedLocation(nodeIndex) || getSelectedLocation(nodeIndex)?.available)"
-                        [class.hover:border-muted-foreground]="openDropdown() !== nodeIndex"
-                      >
-                        @if (getSelectedLocation(nodeIndex); as loc) {
-                          <span class="flex items-center gap-3">
-                            <span class="text-xl" [class.grayscale]="!loc.available">{{ loc.flag }}</span>
-                            <span [class.text-foreground]="loc.available" [class.text-status-error]="!loc.available">{{ loc.countryName }}</span>
-                            <span class="text-muted-foreground text-sm">({{ loc.city }})</span>
-                            @if (!loc.available) {
-                              <span class="text-xs uppercase tracking-wider text-status-error border border-status-error px-2 py-0.5 ml-2">Unavailable</span>
-                            }
-                          </span>
-                        } @else {
-                          <span class="text-muted-foreground">Select location...</span>
-                        }
-                        <!-- Chevron -->
-                        <svg
-                          class="w-4 h-4 text-muted-foreground transition-transform"
-                          [class.rotate-180]="openDropdown() === nodeIndex"
-                          fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  <div class="space-y-2">
+                    <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Node {{ nodeIndex + 1 }}
+                    </span>
+                    <div class="grid grid-cols-3 md:grid-cols-6 gap-1.5">
+                      @for (loc of filteredLocations(); track loc.id) {
+                        <button
+                          type="button"
+                          (click)="selectLocation(nodeIndex, loc.id)"
+                          [ngClass]="getLocationClass(nodeIndex, loc)"
+                          [disabled]="!loc.available"
                         >
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-
-                      <!-- Dropdown panel -->
-                      @if (openDropdown() === nodeIndex) {
-                        <div class="absolute z-50 w-full mt-1 bg-bg-secondary border border-border shadow-lg shadow-black/50 max-h-64 overflow-y-auto">
-                          @for (loc of locations(); track loc.id) {
-                            <button
-                              type="button"
-                              (click)="loc.available && selectLocation(nodeIndex, loc.id)"
-                              class="w-full px-4 py-3 flex items-center gap-3 text-left transition-colors border-b border-border last:border-0"
-                              [class.bg-neon-green]="nodeRegions()[nodeIndex] === loc.id && loc.available"
-                              [class.text-bg-primary]="nodeRegions()[nodeIndex] === loc.id && loc.available"
-                              [class.hover:bg-bg-tertiary]="nodeRegions()[nodeIndex] !== loc.id && loc.available"
-                              [class.opacity-40]="!loc.available"
-                              [class.cursor-not-allowed]="!loc.available"
-                              [disabled]="!loc.available"
-                            >
-                              <span class="text-xl" [class.grayscale]="!loc.available">{{ loc.flag }}</span>
-                              <div class="flex-1">
-                                <span
-                                  [class.text-bg-primary]="nodeRegions()[nodeIndex] === loc.id && loc.available"
-                                  [class.text-foreground]="nodeRegions()[nodeIndex] !== loc.id && loc.available"
-                                  [class.text-muted-foreground]="!loc.available"
-                                >
-                                  {{ loc.countryName }}
-                                </span>
-                                <span
-                                  class="text-sm ml-2"
-                                  [class.text-bg-primary]="nodeRegions()[nodeIndex] === loc.id && loc.available"
-                                  [class.text-muted-foreground]="nodeRegions()[nodeIndex] !== loc.id || !loc.available"
-                                >
-                                  {{ loc.city }}
-                                </span>
-                              </div>
-                              @if (!loc.available) {
-                                <span class="text-xs uppercase tracking-wider text-status-error border border-status-error px-2 py-0.5">Unavailable</span>
-                              } @else if (nodeRegions()[nodeIndex] === loc.id) {
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                                </svg>
-                              }
-                            </button>
-                          }
-                        </div>
+                          <span>{{ loc.flag }}</span>
+                          <span class="text-[10px] truncate">{{ loc.city }}</span>
+                        </button>
                       }
                     </div>
                   </div>
@@ -204,18 +202,30 @@ import { Location } from '../../../core/models';
             </div>
           }
 
-          <div class="flex gap-3 pt-2">
-            <button
-              type="submit"
-              [disabled]="loading() || !canSubmit()"
-              class="btn-primary flex-1"
-            >
-              @if (loading()) {
-                <span class="spinner w-4 h-4 mr-2"></span>
-              }
-              Create Cluster
-            </button>
-          </div>
+          <!-- Submit Button / Loading State -->
+          @if (loading()) {
+            <div class="bg-bg-tertiary border border-border p-6 text-center space-y-4">
+              <div class="flex justify-center">
+                <span class="spinner w-8 h-8"></span>
+              </div>
+              <div class="space-y-2">
+                <p class="text-foreground font-semibold">Creating your servers...</p>
+                <p class="text-sm text-muted-foreground">
+                  This may take up to a minute while we provision your infrastructure.
+                </p>
+              </div>
+            </div>
+          } @else {
+            <div class="flex gap-3 pt-2">
+              <button
+                type="submit"
+                [disabled]="!canSubmit()"
+                class="btn-primary flex-1"
+              >
+                Create Cluster
+              </button>
+            </div>
+          }
         </form>
       </div>
     </div>
@@ -224,7 +234,13 @@ import { Location } from '../../../core/models';
 export class ClusterCreateComponent implements OnInit {
   form: FormGroup;
   loading = signal(false);
-  error = signal<string | null>(null);
+
+  // Server types state
+  serverTypes = signal<ServerTypesResponse | null>(null);
+  serverTypesLoading = signal(true);
+  serverTypesError = signal<string | null>(null);
+  selectedCategory = signal<'shared' | 'dedicated'>('shared');
+  selectedServerType = signal<string>('cx23');
 
   // Location state
   locations = signal<Location[]>([]);
@@ -232,14 +248,39 @@ export class ClusterCreateComponent implements OnInit {
   locationsError = signal<string | null>(null);
   nodeRegions = signal<string[]>(['', '', '']);
 
-  // Dropdown state
-  openDropdown = signal<number | null>(null);
+  // Computed: current server types based on selected category
+  currentServerTypes = computed(() => {
+    const types = this.serverTypes();
+    if (!types) return [];
+    return this.selectedCategory() === 'shared' ? types.shared : types.dedicated;
+  });
+
+  // Computed: filter locations based on selected server type availability
+  filteredLocations = computed(() => {
+    const locs = this.locations();
+    const types = this.serverTypes();
+    const selectedType = this.selectedServerType();
+
+    if (!types) return locs;
+
+    // Find the selected server type
+    const allTypes = [...types.shared, ...types.dedicated];
+    const serverType = allTypes.find(t => t.name === selectedType);
+
+    if (!serverType) return locs;
+
+    // Mark locations as available/unavailable based on server type
+    return locs.map(loc => ({
+      ...loc,
+      available: serverType.availableLocations.includes(loc.id)
+    }));
+  });
 
   constructor(
     private fb: FormBuilder,
     private clusterService: ClusterService,
-    private router: Router,
-    private elementRef: ElementRef
+    private notificationService: NotificationService,
+    private router: Router
   ) {
     this.form = this.fb.group({
       name: ['', [
@@ -250,16 +291,38 @@ export class ClusterCreateComponent implements OnInit {
     });
   }
 
-  // Close dropdown when clicking outside
-  @HostListener('document:click', ['$event'])
-  onDocumentClick(event: MouseEvent): void {
-    if (!this.elementRef.nativeElement.contains(event.target)) {
-      this.openDropdown.set(null);
-    }
+  ngOnInit(): void {
+    this.loadServerTypes();
+    this.loadLocations();
   }
 
-  ngOnInit(): void {
-    this.loadLocations();
+  loadServerTypes(): void {
+    this.serverTypesLoading.set(true);
+    this.serverTypesError.set(null);
+
+    this.clusterService.getServerTypes().subscribe({
+      next: (types) => {
+        this.serverTypes.set(types);
+        this.serverTypesLoading.set(false);
+
+        // Ensure default is available, otherwise pick first available
+        if (types.shared.length > 0) {
+          const cx23 = types.shared.find(t => t.name === 'cx23');
+          if (cx23 && cx23.availableLocations.length > 0) {
+            this.selectedServerType.set('cx23');
+          } else {
+            const firstAvailable = types.shared.find(t => t.availableLocations.length > 0);
+            if (firstAvailable) {
+              this.selectedServerType.set(firstAvailable.name);
+            }
+          }
+        }
+      },
+      error: (err) => {
+        this.serverTypesLoading.set(false);
+        this.serverTypesError.set(err.error?.message || 'Failed to load server types');
+      }
+    });
   }
 
   loadLocations(): void {
@@ -270,22 +333,6 @@ export class ClusterCreateComponent implements OnInit {
       next: (locs) => {
         this.locations.set(locs);
         this.locationsLoading.set(false);
-
-        // Clear selections that are no longer available
-        const regions = [...this.nodeRegions()];
-        let changed = false;
-        regions.forEach((regionId, index) => {
-          if (regionId) {
-            const loc = locs.find(l => l.id === regionId);
-            if (!loc || !loc.available) {
-              regions[index] = '';
-              changed = true;
-            }
-          }
-        });
-        if (changed) {
-          this.nodeRegions.set(regions);
-        }
       },
       error: (err) => {
         this.locationsLoading.set(false);
@@ -294,48 +341,109 @@ export class ClusterCreateComponent implements OnInit {
     });
   }
 
-  toggleDropdown(nodeIndex: number, event: Event): void {
-    event.stopPropagation();
-    if (this.openDropdown() === nodeIndex) {
-      this.openDropdown.set(null);
-    } else {
-      this.openDropdown.set(nodeIndex);
+  selectCategory(category: 'shared' | 'dedicated'): void {
+    if (this.selectedCategory() === category) return;
+    this.selectedCategory.set(category);
+
+    // Select first available server type in new category
+    const types = this.serverTypes();
+    if (types) {
+      const categoryTypes = category === 'shared' ? types.shared : types.dedicated;
+      const firstAvailable = categoryTypes.find(t => t.availableLocations.length > 0);
+      if (firstAvailable) {
+        this.selectedServerType.set(firstAvailable.name);
+        this.clearInvalidRegions();
+      }
+    }
+  }
+
+  selectServerType(type: ServerType): void {
+    if (!this.isAvailable(type)) return;
+    this.selectedServerType.set(type.name);
+    this.clearInvalidRegions();
+  }
+
+  isAvailable(type: ServerType): boolean {
+    return type.availableLocations.length > 0;
+  }
+
+  getServerTypeClass(type: ServerType): string {
+    const base = 'p-4 border text-left transition-all';
+    const isSelected = this.selectedServerType() === type.name;
+    const available = this.isAvailable(type);
+
+    if (!available) {
+      return `${base} opacity-40 cursor-not-allowed border-border`;
+    }
+    if (isSelected) {
+      return `${base} border-neon-green bg-neon-green/10`;
+    }
+    return `${base} border-border hover:border-muted-foreground`;
+  }
+
+  clearInvalidRegions(): void {
+    // Clear region selections that are no longer valid for the new server type
+    const regions = [...this.nodeRegions()];
+    const filtered = this.filteredLocations();
+    let changed = false;
+
+    regions.forEach((regionId, index) => {
+      if (regionId) {
+        const loc = filtered.find(l => l.id === regionId);
+        if (!loc || !loc.available) {
+          regions[index] = '';
+          changed = true;
+        }
+      }
+    });
+
+    if (changed) {
+      this.nodeRegions.set(regions);
     }
   }
 
   selectLocation(nodeIndex: number, locationId: string): void {
-    // Only allow selecting available locations
-    const loc = this.locations().find(l => l.id === locationId);
+    const loc = this.filteredLocations().find(l => l.id === locationId);
     if (!loc?.available) return;
 
     const regions = [...this.nodeRegions()];
     regions[nodeIndex] = locationId;
     this.nodeRegions.set(regions);
-    this.openDropdown.set(null);
   }
 
-  getSelectedLocation(nodeIndex: number): Location | null {
-    const regionId = this.nodeRegions()[nodeIndex];
-    if (!regionId) return null;
-    return this.locations().find(loc => loc.id === regionId) || null;
+  getLocationClass(nodeIndex: number, loc: Location): string {
+    const base = 'px-1.5 py-2 border text-center transition-all flex flex-col items-center gap-0.5 rounded';
+    const isSelected = this.nodeRegions()[nodeIndex] === loc.id;
+
+    if (!loc.available) {
+      return `${base} opacity-30 cursor-not-allowed border-border grayscale`;
+    }
+    if (isSelected) {
+      return `${base} border-neon-green bg-neon-green/10`;
+    }
+    return `${base} border-border hover:border-muted-foreground`;
   }
 
   canSubmit(): boolean {
-    // Form must be valid and all 3 regions must be selected and available
     const regions = this.nodeRegions();
     const allRegionsSelected = regions.every(r => r !== '');
     const allRegionsAvailable = regions.every(r => {
       if (!r) return false;
-      const loc = this.locations().find(l => l.id === r);
+      const loc = this.filteredLocations().find(l => l.id === r);
       return loc?.available === true;
     });
-    return this.form.valid && allRegionsSelected && allRegionsAvailable && !this.locationsLoading();
+    return this.form.valid &&
+           allRegionsSelected &&
+           allRegionsAvailable &&
+           !this.locationsLoading() &&
+           !this.serverTypesLoading() &&
+           !!this.selectedServerType();
   }
 
   hasUnavailableSelections(): boolean {
     return this.nodeRegions().some(r => {
       if (!r) return false;
-      const loc = this.locations().find(l => l.id === r);
+      const loc = this.filteredLocations().find(l => l.id === r);
       return loc && !loc.available;
     });
   }
@@ -344,10 +452,10 @@ export class ClusterCreateComponent implements OnInit {
     if (!this.canSubmit()) return;
 
     this.loading.set(true);
-    this.error.set(null);
 
     const request = {
       name: this.form.get('name')?.value,
+      nodeSize: this.selectedServerType(),
       nodeRegions: this.nodeRegions()
     };
 
@@ -357,7 +465,8 @@ export class ClusterCreateComponent implements OnInit {
       },
       error: (err) => {
         this.loading.set(false);
-        this.error.set(err.error?.message || err.error?.error || 'Failed to create cluster. Please try again.');
+        const message = err.error?.message || err.error?.error || 'Failed to create cluster. Please try again.';
+        this.notificationService.error(message);
       }
     });
   }

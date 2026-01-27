@@ -8,6 +8,8 @@ import com.pgcluster.api.model.dto.ClusterHealthResponse;
 import com.pgcluster.api.model.dto.ClusterListResponse;
 import com.pgcluster.api.model.dto.ClusterResponse;
 import com.pgcluster.api.model.dto.LocationDto;
+import com.pgcluster.api.model.dto.ServerTypeDto;
+import com.pgcluster.api.model.dto.ServerTypesResponse;
 import com.pgcluster.api.model.entity.Cluster;
 import com.pgcluster.api.model.entity.User;
 import com.pgcluster.api.model.entity.VpsNode;
@@ -16,7 +18,6 @@ import com.pgcluster.api.repository.VpsNodeRepository;
 import com.pgcluster.api.util.PasswordGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import com.pgcluster.api.event.ClusterCreatedEvent;
 import com.pgcluster.api.event.ClusterDeleteRequestedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
@@ -100,6 +101,46 @@ public class ClusterService {
     }
 
     /**
+     * Get available server types grouped by category (shared/dedicated).
+     * Fetches specs from Hetzner API and checks availability per location.
+     */
+    public ServerTypesResponse getServerTypes() {
+        List<String> sharedTypes = List.of("cx23", "cx33", "cx43", "cx53");
+        List<String> dedicatedTypes = List.of("ccx13", "ccx23", "ccx33", "ccx43", "ccx53", "ccx63");
+
+        return ServerTypesResponse.builder()
+                .shared(fetchServerTypes(sharedTypes))
+                .dedicated(fetchServerTypes(dedicatedTypes))
+                .build();
+    }
+
+    /**
+     * Fetch server type info from Hetzner API for a list of server type names.
+     */
+    private List<ServerTypeDto> fetchServerTypes(List<String> names) {
+        List<ServerTypeDto> result = new ArrayList<>();
+
+        for (String name : names) {
+            try {
+                HetznerClient.ServerTypeInfo info = hetznerClient.getServerType(name);
+                java.util.Set<String> locations = hetznerClient.getAvailableLocationsForServerType(name);
+
+                result.add(ServerTypeDto.builder()
+                        .name(info.getName())
+                        .cores(info.getCores())
+                        .memory(info.getMemory())  // Already in GB from Hetzner API
+                        .disk(info.getDisk())
+                        .availableLocations(locations)
+                        .build());
+            } catch (Exception e) {
+                log.warn("Failed to fetch server type {}: {}", name, e.getMessage());
+            }
+        }
+
+        return result;
+    }
+
+    /**
      * Validate that all requested node regions are available for the server type.
      */
     private void validateNodeRegions(List<String> nodeRegions, String serverType) {
@@ -162,7 +203,11 @@ public class ClusterService {
                 .build();
     }
 
-    @Transactional
+    /**
+     * Create a new cluster. Server creation is SYNCHRONOUS to catch Hetzner errors
+     * (account limits, availability) before returning to the user.
+     * Remaining provisioning (SSH, containers, DNS) is async.
+     */
     public ClusterResponse createCluster(ClusterCreateRequest request, User user) {
         // Validate that all selected regions are available
         validateNodeRegions(request.getNodeRegions(), request.getNodeSize());
@@ -182,7 +227,6 @@ public class ClusterService {
         String postgresPassword = PasswordGenerator.generate(24);
 
         // Create cluster entity (hostname is set later in Phase 6 after DNS creation)
-        // Node regions are passed separately to ProvisioningService - stored in VpsNode.location
         Cluster cluster = Cluster.builder()
                 .user(user)
                 .name(request.getName())
@@ -199,13 +243,73 @@ public class ClusterService {
                 .provisioningProgress(1)
                 .build();
 
-        cluster = clusterRepository.save(cluster);
-        log.info("Cluster created: {} ({})", cluster.getName(), cluster.getSlug());
+        cluster = clusterRepository.saveAndFlush(cluster);
+        log.info("Cluster record created: {} ({})", cluster.getName(), cluster.getSlug());
 
-        // Publish event to trigger async provisioning after transaction commits
-        eventPublisher.publishEvent(new ClusterCreatedEvent(this, cluster));
+        try {
+            // SYNCHRONOUS: Create all 3 Hetzner servers (~30-60 seconds)
+            // This blocks until all servers are created or fails with rollback
+            log.info("Creating all servers synchronously for cluster: {}", cluster.getSlug());
+            List<VpsNode> nodes = provisioningService.createAllServersSync(cluster);
+            log.info("All {} servers created successfully for cluster: {}", nodes.size(), cluster.getSlug());
 
-        return ClusterResponse.fromEntity(cluster);
+            // ASYNC: Continue provisioning (SSH, containers, DNS)
+            provisioningService.continueProvisioningFromServers(cluster, nodes);
+
+            return ClusterResponse.fromEntity(cluster);
+
+        } catch (Exception e) {
+            // Server creation failed - clean up cluster record
+            log.error("Server creation failed for cluster {}: {}", cluster.getSlug(), e.getMessage());
+
+            // Delete cluster record by ID (entity may be detached after transaction rollback)
+            // VpsNode records are rolled back automatically by @Transactional
+            try {
+                clusterRepository.deleteById(cluster.getId());
+                log.info("Cleaned up failed cluster record: {}", cluster.getSlug());
+            } catch (Exception deleteEx) {
+                log.error("Failed to clean up cluster record {}: {}", cluster.getSlug(), deleteEx.getMessage());
+            }
+
+            // Parse Hetzner error message for user-friendly display
+            String userMessage = parseHetznerError(e.getMessage());
+            throw new ApiException(userMessage, HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    /**
+     * Parse Hetzner API error messages into user-friendly messages.
+     */
+    private String parseHetznerError(String errorMessage) {
+        if (errorMessage == null) {
+            return "Failed to create servers. Please try again.";
+        }
+
+        // Dedicated vCPU limit: ccx servers use dedicated cores which have a separate quota.
+        // e.g. ccx63 needs 48 dedicated vCPUs, but new accounts often only have 8.
+        // Users should either use smaller ccx servers or switch to shared cx servers.
+        if (errorMessage.contains("dedicated_core_limit") || errorMessage.contains("dedicated core limit")) {
+            return "Selected server type exceeds your account's dedicated vCPU limit. " +
+                   "Try a smaller dedicated server (ccx13/ccx23) or use shared servers (cx series).";
+        }
+        if (errorMessage.contains("resource_limit_exceeded") || errorMessage.contains("limit")) {
+            return "Server creation failed due to account limits.";
+        }
+        if (errorMessage.contains("resource_unavailable") || errorMessage.contains("unavailable")) {
+            return "Server type not available in selected region. Please try a different region or server type.";
+        }
+        if (errorMessage.contains("uniqueness_error") || errorMessage.contains("already exists")) {
+            return "A server with this name already exists. Please try again.";
+        }
+        if (errorMessage.contains("unauthorized") || errorMessage.contains("401")) {
+            return "Hetzner API authentication failed. Please contact support.";
+        }
+        if (errorMessage.contains("rate_limit") || errorMessage.contains("429")) {
+            return "Too many requests to Hetzner API. Please wait and try again.";
+        }
+
+        // Return original message if no specific pattern matched
+        return "Failed to create servers: " + errorMessage;
     }
 
     @Transactional

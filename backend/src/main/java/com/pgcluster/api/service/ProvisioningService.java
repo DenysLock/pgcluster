@@ -69,7 +69,133 @@ public class ProvisioningService {
     private int restoreTimeoutMinutes;
 
     /**
-     * Provision a cluster asynchronously
+     * Create ALL servers synchronously for a cluster.
+     * This blocks until all servers are created successfully.
+     * If ANY server fails, all previously created servers are rolled back and an exception is thrown.
+     *
+     * @param cluster The cluster to create servers for
+     * @return List of created VpsNodes
+     * @throws RuntimeException if any server creation fails (after rollback)
+     */
+    @Transactional
+    public List<VpsNode> createAllServersSync(Cluster cluster) {
+        List<VpsNode> createdNodes = new ArrayList<>();
+        String snapshotId = hetznerClient.getSnapshotId();
+        List<String> nodeRegions = cluster.getNodeRegions();
+
+        log.info("Creating all {} servers synchronously for cluster: {}", cluster.getNodeCount(), cluster.getSlug());
+
+        for (int i = 0; i < cluster.getNodeCount(); i++) {
+            String nodeName = String.format("%s-node-%d", cluster.getSlug(), i + 1);
+            String nodeLocation = nodeRegions != null && i < nodeRegions.size()
+                    ? nodeRegions.get(i)
+                    : cluster.getRegion();
+
+            log.info("Creating server {}/{}: {} in {}", i + 1, cluster.getNodeCount(), nodeName, nodeLocation);
+
+            // Create VPS node entity
+            VpsNode node = VpsNode.builder()
+                    .cluster(cluster)
+                    .name(nodeName)
+                    .serverType(cluster.getNodeSize())
+                    .location(nodeLocation)
+                    .status(VpsNode.STATUS_CREATING)
+                    .role(i == 0 ? "leader" : "replica")
+                    .build();
+            node = vpsNodeRepository.save(node);
+
+            try {
+                // Create Hetzner server
+                HetznerClient.CreateServerRequest request = HetznerClient.CreateServerRequest.builder()
+                        .name(nodeName)
+                        .serverType(cluster.getNodeSize())
+                        .image(snapshotId)
+                        .location(nodeLocation)
+                        .sshKeys(Arrays.asList(hetznerClient.getSshKeyIds()))
+                        .labels(Map.of(
+                                "cluster", cluster.getSlug(),
+                                "managed-by", "pgcluster"
+                        ));
+
+                HetznerClient.ServerResponse server = hetznerClient.createServer(request);
+
+                // Update node with Hetzner info
+                node.setHetznerId(server.getId());
+                node.setPublicIp(server.getPublicNet().getIpv4().getIp());
+                node.setStatus(VpsNode.STATUS_STARTING);
+                node = vpsNodeRepository.save(node);
+
+                // Clear any cached SSH host key for this IP
+                hostKeyVerifier.removeHost(node.getPublicIp());
+
+                createdNodes.add(node);
+                log.info("Server {}/{} created: {} with IP {}", i + 1, cluster.getNodeCount(), nodeName, node.getPublicIp());
+
+            } catch (Exception e) {
+                log.error("Failed to create server {}: {}", nodeName, e.getMessage());
+
+                // Mark current node as error
+                node.setStatus(VpsNode.STATUS_ERROR);
+                node.setErrorMessage(e.getMessage());
+                vpsNodeRepository.save(node);
+
+                // Rollback: delete all previously created servers
+                if (!createdNodes.isEmpty()) {
+                    log.warn("Rolling back {} previously created servers due to failure", createdNodes.size());
+                    rollbackServers(createdNodes);
+                }
+
+                throw new RuntimeException("Failed to create server " + nodeName + ": " + e.getMessage(), e);
+            }
+        }
+
+        log.info("All {} servers created successfully for cluster: {}", createdNodes.size(), cluster.getSlug());
+        return createdNodes;
+    }
+
+    /**
+     * Rollback (delete) a list of servers from Hetzner and mark them as error in DB.
+     */
+    private void rollbackServers(List<VpsNode> nodes) {
+        for (VpsNode node : nodes) {
+            try {
+                if (node.getHetznerId() != null) {
+                    hetznerClient.deleteServer(node.getHetznerId());
+                    log.info("Rolled back server: {} (Hetzner ID: {})", node.getName(), node.getHetznerId());
+                }
+                node.setStatus(VpsNode.STATUS_ERROR);
+                node.setErrorMessage("Rolled back due to cluster creation failure");
+                vpsNodeRepository.save(node);
+            } catch (Exception rollbackEx) {
+                log.error("Failed to rollback server {}: {}", node.getName(), rollbackEx.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Continue provisioning asynchronously after servers are already created.
+     * Starts from SSH wait phase (Phase 2).
+     */
+    @Async
+    public void continueProvisioningFromServers(Cluster cluster, List<VpsNode> nodes) {
+        try {
+            log.info("Continuing provisioning for cluster: {} (servers already created)", cluster.getSlug());
+
+            clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_CREATING, null);
+
+            // Generate passwords
+            String replicatorPassword = PasswordGenerator.generate(24);
+
+            // Continue from Phase 2 (SSH wait) - servers already exist
+            continueProvisioning(cluster, nodes, replicatorPassword);
+        } catch (Exception e) {
+            log.error("Failed to provision cluster {}: {}", cluster.getSlug(), e.getMessage(), e);
+            clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_ERROR, e.getMessage());
+        }
+    }
+
+    /**
+     * Provision a cluster asynchronously (legacy - creates all servers)
      */
     @Async
     public void provisionClusterAsync(Cluster cluster) {
@@ -97,6 +223,14 @@ public class ProvisioningService {
         log.info("Phase 1: Creating VPS nodes...");
         clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_CREATING_SERVERS, 1);
         List<VpsNode> nodes = createVpsNodes(cluster);
+
+        continueProvisioning(cluster, nodes, replicatorPassword);
+    }
+
+    /**
+     * Continue provisioning from Phase 2 onwards
+     */
+    private void continueProvisioning(Cluster cluster, List<VpsNode> nodes, String replicatorPassword) {
 
         // Check if cluster was deleted during node creation
         if (isClusterBeingDeleted(cluster.getId())) {

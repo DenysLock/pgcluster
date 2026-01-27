@@ -325,23 +325,56 @@ public class HetznerClient {
     }
 
     /**
-     * Get set of location names where a server type is available
+     * Get set of location names where a server type is available (real-time stock).
+     * Uses /datacenters endpoint which has current availability.
      */
     public java.util.Set<String> getAvailableLocationsForServerType(String serverTypeName) {
+        // First get the server type ID
         ServerTypeInfo serverType = getServerType(serverTypeName);
-        java.util.Set<String> availableLocations = new java.util.HashSet<>();
+        Long serverTypeId = serverType.getId();
 
-        if (serverType.getPrices() != null) {
-            for (ServerTypePrice price : serverType.getPrices()) {
-                if (price.getLocation() != null) {
-                    availableLocations.add(price.getLocation());
+        // Then check real-time availability from datacenters endpoint
+        java.util.Set<String> availableLocations = new java.util.HashSet<>();
+        List<DatacenterInfo> datacenters = getDatacenters();
+
+        for (DatacenterInfo dc : datacenters) {
+            if (dc.getServerTypes() != null &&
+                dc.getServerTypes().getAvailable() != null &&
+                dc.getServerTypes().getAvailable().contains(serverTypeId)) {
+                // Use location name from datacenter
+                if (dc.getLocation() != null && dc.getLocation().getName() != null) {
+                    availableLocations.add(dc.getLocation().getName());
                 }
             }
         }
 
-        log.info("Server type {} is available in {} locations: {}",
-                serverTypeName, availableLocations.size(), availableLocations);
+        log.info("Server type {} (id={}) is available in {} locations: {}",
+                serverTypeName, serverTypeId, availableLocations.size(), availableLocations);
         return availableLocations;
+    }
+
+    /**
+     * Get all datacenters with real-time server type availability
+     */
+    @CircuitBreaker(name = "hetzner")
+    @Retry(name = "hetzner")
+    public List<DatacenterInfo> getDatacenters() {
+        HttpHeaders headers = createHeaders();
+        HttpEntity<?> entity = new HttpEntity<>(headers);
+
+        log.debug("Fetching Hetzner datacenters for availability");
+
+        ResponseEntity<DatacenterListResponse> response = restTemplate.exchange(
+                BASE_URL + "/datacenters",
+                HttpMethod.GET,
+                entity,
+                DatacenterListResponse.class
+        );
+
+        if (response.getBody() != null && response.getBody().getDatacenters() != null) {
+            return response.getBody().getDatacenters();
+        }
+        return List.of();
     }
 
     // Location API DTOs
@@ -377,6 +410,21 @@ public class HetznerClient {
         private int memory;       // in MB
         private int disk;         // in GB
         private List<ServerTypePrice> prices;
+        private List<ServerTypeLocation> locations;  // Location availability with deprecation
+    }
+
+    @Data
+    public static class ServerTypeLocation {
+        private Long id;
+        private String name;       // "fsn1"
+        private Deprecation deprecation;
+    }
+
+    @Data
+    public static class Deprecation {
+        private String announced;
+        @JsonProperty("unavailable_after")
+        private String unavailableAfter;  // ISO datetime
     }
 
     @Data
@@ -392,5 +440,37 @@ public class HetznerClient {
     public static class PriceDetail {
         private String net;
         private String gross;
+    }
+
+    // Datacenter API DTOs (for real-time availability)
+    @Data
+    public static class DatacenterListResponse {
+        private List<DatacenterInfo> datacenters;
+    }
+
+    @Data
+    public static class DatacenterInfo {
+        private Long id;
+        private String name;           // "nbg1-dc3"
+        private String description;
+        private DatacenterLocation location;
+        @JsonProperty("server_types")
+        private DatacenterServerTypes serverTypes;
+    }
+
+    @Data
+    public static class DatacenterLocation {
+        private Long id;
+        private String name;           // "nbg1"
+        private String city;
+        private String country;
+    }
+
+    @Data
+    public static class DatacenterServerTypes {
+        private List<Long> available;              // Currently in stock
+        @JsonProperty("available_for_migration")
+        private List<Long> availableForMigration;
+        private List<Long> supported;              // Supported but maybe out of stock
     }
 }
