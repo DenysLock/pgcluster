@@ -1,5 +1,6 @@
 package com.pgcluster.api.model.dto;
 
+import jakarta.validation.constraints.AssertTrue;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.AllArgsConstructor;
@@ -40,8 +41,18 @@ public class RestoreRequest {
     /**
      * Node regions for the new cluster.
      * If not provided, uses source cluster's node regions.
-     * Must specify exactly 3 regions if provided.
+     * Must specify exactly 1 or 3 regions if provided.
      */
-    @Size(min = 3, max = 3, message = "Must specify exactly 3 node regions")
+    @Size(min = 1, max = 3, message = "Must specify 1 to 3 node regions")
     private List<String> nodeRegions;
+
+    /**
+     * Custom validation: if nodeRegions provided, must be exactly 1 or 3.
+     * 2 nodes is disallowed because etcd quorum would be 2.
+     */
+    @AssertTrue(message = "Must specify exactly 1 node (single) or 3 nodes (HA)")
+    public boolean isValidNodeCount() {
+        // Null is allowed (uses source cluster's regions)
+        return nodeRegions == null || nodeRegions.size() == 1 || nodeRegions.size() == 3;
+    }
 }

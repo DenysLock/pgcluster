@@ -83,7 +83,7 @@ interface ProvisioningStep {
           <div class="card">
             <div class="card-header">Provisioning Progress</div>
             <div class="space-y-4">
-              @for (step of provisioningSteps; track step.id) {
+              @for (step of provisioningSteps(); track step.id) {
                 <div class="flex items-center gap-3">
                   <!-- Step indicator -->
                   @if (step.id < currentStep()) {
@@ -305,6 +305,7 @@ interface ProvisioningStep {
             <app-metrics-card
               [clusterId]="clusterId"
               [isClusterRunning]="isRunning()"
+              [nodeCount]="cluster()?.nodeCount || 1"
             />
           }
 
@@ -382,15 +383,30 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
   private pollingSubscription?: Subscription;
   private routeSubscription?: Subscription;
 
-  // Provisioning steps configuration
-  readonly provisioningSteps: ProvisioningStep[] = [
-    { id: 1, key: 'creating_servers', label: 'Creating servers' },
-    { id: 2, key: 'waiting_ssh', label: 'Waiting for SSH' },
-    { id: 3, key: 'building_config', label: 'Building configuration' },
-    { id: 4, key: 'starting_containers', label: 'Starting containers' },
-    { id: 5, key: 'electing_leader', label: 'Electing Patroni leader' },
-    { id: 6, key: 'creating_dns', label: 'Creating DNS record' },
-  ];
+  // Provisioning steps - computed based on node count
+  provisioningSteps = computed<ProvisioningStep[]>(() => {
+    const nodeCount = this.cluster()?.nodeCount || 3;
+    if (nodeCount === 1) {
+      // Single node: rename "Electing leader" to "Starting PostgreSQL"
+      return [
+        { id: 1, key: 'creating_servers', label: 'Creating server' },
+        { id: 2, key: 'waiting_ssh', label: 'Waiting for SSH' },
+        { id: 3, key: 'building_config', label: 'Building configuration' },
+        { id: 4, key: 'starting_containers', label: 'Starting containers' },
+        { id: 5, key: 'starting_postgres', label: 'Starting PostgreSQL' },
+        { id: 6, key: 'creating_dns', label: 'Creating DNS record' },
+      ];
+    }
+    // HA cluster: all steps
+    return [
+      { id: 1, key: 'creating_servers', label: 'Creating servers' },
+      { id: 2, key: 'waiting_ssh', label: 'Waiting for SSH' },
+      { id: 3, key: 'building_config', label: 'Building configuration' },
+      { id: 4, key: 'starting_containers', label: 'Starting containers' },
+      { id: 5, key: 'electing_leader', label: 'Electing Patroni leader' },
+      { id: 6, key: 'creating_dns', label: 'Creating DNS record' },
+    ];
+  });
 
   constructor(
     private route: ActivatedRoute,
@@ -412,6 +428,10 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
   isDeleted = computed(() => {
     const status = this.cluster()?.status;
     return status === 'deleting' || status === 'deleted';
+  });
+
+  isSingleNode = computed(() => {
+    return (this.cluster()?.nodeCount || 3) === 1;
   });
 
   currentStep = computed(() => {

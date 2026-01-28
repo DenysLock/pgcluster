@@ -1025,21 +1025,23 @@ public class BackupService {
 
     /**
      * Extract node regions from an existing cluster's VpsNodes.
-     * Falls back to cluster's primary region for all 3 nodes if no nodes exist.
+     * Falls back to cluster's primary region for all nodes if no nodes exist.
+     * Respects cluster's nodeCount (1 for single-node, 3 for HA).
      */
     private List<String> getNodeRegionsFromCluster(Cluster cluster) {
+        int nodeCount = cluster.getNodeCount();
         List<VpsNode> nodes = vpsNodeRepository.findByClusterOrderByCreatedAt(cluster);
         if (nodes.isEmpty()) {
-            // Fallback to cluster's primary region for all 3 nodes
+            // Fallback to cluster's primary region for all nodes
             String region = cluster.getRegion();
-            return List.of(region, region, region);
+            return Collections.nCopies(nodeCount, region);
         }
-        // Get locations from nodes, padding to 3 if needed
+        // Get locations from nodes, padding if needed
         List<String> regions = nodes.stream()
                 .map(VpsNode::getLocation)
-                .limit(3)
-                .collect(Collectors.toList());
-        while (regions.size() < 3) {
+                .limit(nodeCount)
+                .collect(Collectors.toCollection(ArrayList::new));
+        while (regions.size() < nodeCount) {
             regions.add(regions.get(0));
         }
         return regions;

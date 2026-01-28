@@ -15,7 +15,7 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
       <!-- Header -->
       <div>
         <h1 class="text-xl font-semibold uppercase tracking-wider text-foreground">Create Cluster</h1>
-        <p class="text-muted-foreground text-sm mt-1">Deploy a new PostgreSQL cluster with high availability</p>
+        <p class="text-muted-foreground text-sm mt-1">Deploy a new PostgreSQL cluster</p>
       </div>
 
       <!-- Form -->
@@ -116,11 +116,34 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
             }
           </div>
 
+          <!-- Cluster Mode Toggle -->
+          <div class="space-y-3">
+            <label class="label">Cluster Mode</label>
+            <div class="flex gap-3">
+              <button
+                type="button"
+                (click)="toggleHaMode(false)"
+                [ngClass]="!haMode() ? 'flex-1 p-4 border text-left transition-all border-neon-green bg-neon-green/10' : 'flex-1 p-4 border text-left transition-all border-border hover:border-muted-foreground'"
+              >
+                <div class="font-semibold text-foreground">Single Node</div>
+                <div class="text-xs text-muted-foreground mt-1">1 node, lower cost, no HA</div>
+              </button>
+              <button
+                type="button"
+                (click)="toggleHaMode(true)"
+                [ngClass]="haMode() ? 'flex-1 p-4 border text-left transition-all border-neon-green bg-neon-green/10' : 'flex-1 p-4 border text-left transition-all border-border hover:border-muted-foreground'"
+              >
+                <div class="font-semibold text-foreground">High Availability</div>
+                <div class="text-xs text-muted-foreground mt-1">3 nodes, auto-failover</div>
+              </button>
+            </div>
+          </div>
+
           <!-- Node Locations as Button Grid -->
           <div class="space-y-4">
-            <label class="label">Node Locations</label>
+            <label class="label">Node {{ haMode() ? 'Locations' : 'Location' }}</label>
             <p class="text-xs text-muted-foreground -mt-2">
-              Select a region for each node. Grayed buttons are unavailable for the selected server type.
+              Select a region for {{ haMode() ? 'each node' : 'your node' }}. Grayed buttons are unavailable for the selected server type.
             </p>
 
             @if (locationsLoading()) {
@@ -134,10 +157,10 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
               </div>
             } @else {
               <div class="space-y-4">
-                @for (nodeIndex of [0, 1, 2]; track nodeIndex) {
+                @for (nodeIndex of (haMode() ? [0, 1, 2] : [0]); track nodeIndex) {
                   <div class="space-y-2">
                     <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Node {{ nodeIndex + 1 }}
+                      {{ haMode() ? 'Node ' + (nodeIndex + 1) : 'Node' }}
                     </span>
                     <div class="grid grid-cols-3 md:grid-cols-6 gap-1.5">
                       @for (loc of filteredLocations(); track loc.id) {
@@ -160,20 +183,43 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
 
           <!-- Features -->
           <div class="bg-bg-tertiary border border-border p-4 space-y-3">
-            <h3 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">All clusters include:</h3>
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              {{ haMode() ? 'HA cluster includes:' : 'Single node includes:' }}
+            </h3>
             <ul class="grid gap-2 text-sm text-gray-300">
-              <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                </svg>
-                3-node high availability cluster
-              </li>
-              <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                </svg>
-                Automatic failover with Patroni
-              </li>
+              @if (haMode()) {
+                <li class="flex items-center gap-2">
+                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  3-node high availability cluster
+                </li>
+                <li class="flex items-center gap-2">
+                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Automatic failover with Patroni
+                </li>
+              } @else {
+                <li class="flex items-center gap-2">
+                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Single node deployment
+                </li>
+                <li class="flex items-center gap-2">
+                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Auto-restart on crash
+                </li>
+                <li class="flex items-center gap-2">
+                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                  </svg>
+                  Upgrade path to 3-node HA
+                </li>
+              }
               <li class="flex items-center gap-2">
                 <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
@@ -218,8 +264,8 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
           } @else {
             <div class="flex gap-3 pt-2">
               <button
-                type="submit"
-                [disabled]="!canSubmit()"
+                type="button"
+                (click)="onCreateClick()"
                 class="btn-primary flex-1"
               >
                 Create Cluster
@@ -247,6 +293,9 @@ export class ClusterCreateComponent implements OnInit {
   locationsLoading = signal(true);
   locationsError = signal<string | null>(null);
   nodeRegions = signal<string[]>(['', '', '']);
+
+  // HA mode: true = 3 nodes (HA), false = 1 node (single)
+  haMode = signal<boolean>(true);
 
   // Computed: current server types based on selected category
   currentServerTypes = computed(() => {
@@ -381,6 +430,18 @@ export class ClusterCreateComponent implements OnInit {
     return `${base} border-border hover:border-muted-foreground`;
   }
 
+  toggleHaMode(enabled: boolean): void {
+    if (this.haMode() === enabled) return;
+    this.haMode.set(enabled);
+    if (enabled) {
+      // Switch to HA: 3 nodes
+      this.nodeRegions.set(['', '', '']);
+    } else {
+      // Switch to single node: 1 node
+      this.nodeRegions.set(['']);
+    }
+  }
+
   clearInvalidRegions(): void {
     // Clear region selections that are no longer valid for the new server type
     const regions = [...this.nodeRegions()];
@@ -448,9 +509,47 @@ export class ClusterCreateComponent implements OnInit {
     });
   }
 
-  onSubmit(): void {
-    if (!this.canSubmit()) return;
+  onCreateClick(): void {
+    // Validate and show appropriate error messages
+    const nameControl = this.form.get('name');
+    const name = nameControl?.value?.trim() || '';
 
+    if (!name) {
+      this.notificationService.error('Please enter a cluster name');
+      nameControl?.markAsTouched();
+      return;
+    }
+
+    if (name.length < 3) {
+      this.notificationService.error('Cluster name must be at least 3 characters');
+      nameControl?.markAsTouched();
+      return;
+    }
+
+    if (!/^[a-z0-9-]+$/.test(name)) {
+      this.notificationService.error('Cluster name can only contain lowercase letters, numbers, and hyphens');
+      nameControl?.markAsTouched();
+      return;
+    }
+
+    const regions = this.nodeRegions();
+    const allRegionsSelected = regions.every(r => r !== '');
+    if (!allRegionsSelected) {
+      const nodeCount = this.haMode() ? 3 : 1;
+      this.notificationService.error(`Please select a region for ${nodeCount === 1 ? 'your node' : 'all ' + nodeCount + ' nodes'}`);
+      return;
+    }
+
+    if (this.hasUnavailableSelections()) {
+      this.notificationService.error('One or more selected regions are unavailable. Please select different regions.');
+      return;
+    }
+
+    // All validations passed, submit
+    this.onSubmit();
+  }
+
+  onSubmit(): void {
     this.loading.set(true);
 
     const request = {

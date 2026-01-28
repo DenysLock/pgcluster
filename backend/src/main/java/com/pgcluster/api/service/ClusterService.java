@@ -234,7 +234,7 @@ public class ClusterService {
                 .plan(request.getPlan())
                 .status(Cluster.STATUS_PENDING)
                 .postgresVersion(request.getPostgresVersion())
-                .nodeCount(3) // Fixed at 3 nodes
+                .nodeCount(request.getNodeRegions().size()) // 1 = single node, 3 = HA cluster
                 .nodeSize(request.getNodeSize())
                 .region(request.getNodeRegions().get(0)) // Store first region as primary for display
                 .postgresPassword(postgresPassword)
@@ -247,7 +247,7 @@ public class ClusterService {
         log.info("Cluster record created: {} ({})", cluster.getName(), cluster.getSlug());
 
         try {
-            // SYNCHRONOUS: Create all 3 Hetzner servers (~30-60 seconds)
+            // SYNCHRONOUS: Create Hetzner servers (1 or 3 depending on cluster mode)
             // This blocks until all servers are created or fails with rollback
             log.info("Creating all servers synchronously for cluster: {}", cluster.getSlug());
             List<VpsNode> nodes = provisioningService.createAllServersSync(cluster);

@@ -28,6 +28,15 @@ public class ClusterCreateRequest {
     private String nodeSize = "cx23";
 
     @NotNull(message = "Node regions are required")
-    @Size(min = 3, max = 3, message = "Must specify exactly 3 node regions")
+    @Size(min = 1, max = 3, message = "Must specify 1 to 3 node regions")
     private List<String> nodeRegions;
+
+    /**
+     * Custom validation: only 1 or 3 nodes allowed.
+     * 2 nodes is disallowed because etcd quorum would be 2, meaning ANY failure breaks the cluster.
+     */
+    @AssertTrue(message = "Must specify exactly 1 node (single) or 3 nodes (HA)")
+    public boolean isValidNodeCount() {
+        return nodeRegions != null && (nodeRegions.size() == 1 || nodeRegions.size() == 3);
+    }
 }

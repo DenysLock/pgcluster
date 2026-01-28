@@ -116,12 +116,14 @@ import { MetricChartComponent } from './metric-chart.component';
               unit="/s"
               [series]="metrics()!.deadlocks"
             />
-            <!-- Row 4: Replication -->
-            <app-metric-chart
-              title="Replication Lag"
-              unit="s"
-              [series]="metrics()!.replicationLag"
-            />
+            <!-- Row 4: Replication (only for HA clusters) -->
+            @if (nodeCount > 1) {
+              <app-metric-chart
+                title="Replication Lag"
+                unit="s"
+                [series]="metrics()!.replicationLag"
+              />
+            }
           </div>
 
           <!-- No Data Warning -->
@@ -148,6 +150,7 @@ import { MetricChartComponent } from './metric-chart.component';
 export class MetricsCardComponent implements OnInit, OnDestroy {
   @Input({ required: true }) clusterId!: string;
   @Input() isClusterRunning: boolean = false;
+  @Input() nodeCount: number = 3;
 
   loading = signal(false);
   error = signal<string | null>(null);
