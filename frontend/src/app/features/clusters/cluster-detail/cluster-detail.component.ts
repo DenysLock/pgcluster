@@ -316,6 +316,7 @@ interface ProvisioningStep {
               [clusterSlug]="cluster()?.slug || ''"
               [isClusterRunning]="isRunning()"
               [clusterNodes]="cluster()?.nodes || []"
+              [sourceNodeSize]="cluster()?.nodeSize || 'cx23'"
             />
           }
 

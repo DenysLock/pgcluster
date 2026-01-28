@@ -583,6 +583,11 @@ public class BackupService {
             String slug = generateUniqueSlug(newClusterName);
             String postgresPassword = PasswordGenerator.generate(24);
 
+            // Use nodeSize from request if provided, otherwise from source cluster
+            String nodeSize = (request != null && request.getNodeSize() != null)
+                    ? request.getNodeSize()
+                    : sourceCluster.getNodeSize();
+
             targetCluster = Cluster.builder()
                     .user(user)
                     .name(newClusterName)
@@ -590,8 +595,8 @@ public class BackupService {
                     .plan(sourceCluster.getPlan())
                     .status(Cluster.STATUS_PENDING)
                     .postgresVersion(sourceCluster.getPostgresVersion())
-                    .nodeCount(sourceCluster.getNodeCount())
-                    .nodeSize(sourceCluster.getNodeSize())
+                    .nodeCount(nodeRegions.size())
+                    .nodeSize(nodeSize)
                     .region(nodeRegions.get(0))
                     .nodeRegions(nodeRegions)
                     .postgresPassword(postgresPassword)

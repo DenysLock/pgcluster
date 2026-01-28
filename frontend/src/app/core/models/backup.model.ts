@@ -60,6 +60,7 @@ export interface RestoreRequest {
   createNewCluster?: boolean;
   newClusterName?: string;
   nodeRegions?: string[];
+  nodeSize?: string;
 }
 
 export interface BackupDeletionInfo {

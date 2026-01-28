@@ -47,6 +47,15 @@ public class RestoreRequest {
     private List<String> nodeRegions;
 
     /**
+     * Server type/size for the restored cluster nodes.
+     * If not provided, uses source cluster's node size.
+     * Examples: "cx23", "cx33", "ccx13"
+     */
+    @Pattern(regexp = "^(cx[2345]3|ccx[123456]3|cpx[123]1|cpx[345]1|cax[123]1)$",
+            message = "Invalid node size")
+    private String nodeSize;
+
+    /**
      * Custom validation: if nodeRegions provided, must be exactly 1 or 3.
      * 2 nodes is disallowed because etcd quorum would be 2.
      */

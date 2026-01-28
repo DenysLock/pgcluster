@@ -6,7 +6,7 @@ import { interval, Subscription } from 'rxjs';
 import { BackupService } from '../../../../core/services/backup.service';
 import { ClusterService } from '../../../../core/services/cluster.service';
 import { NotificationService } from '../../../../core/services/notification.service';
-import { Backup, BackupDeletionInfo, BackupStatus, BackupMetrics, BackupStep, Location, ClusterNode } from '../../../../core/models';
+import { Backup, BackupDeletionInfo, BackupStatus, BackupMetrics, BackupStep, Location, ClusterNode, ServerType, ServerTypesResponse } from '../../../../core/models';
 import { POLLING_INTERVALS } from '../../../../core/constants';
 @Component({
   selector: 'app-backups-card',
@@ -322,6 +322,93 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               </div>
             </div>
 
+            <!-- Cluster Mode Toggle -->
+            <div class="space-y-3 mb-4">
+              <label class="label">Cluster Mode</label>
+              <div class="flex gap-3">
+                <button
+                  type="button"
+                  (click)="toggleHaMode(false)"
+                  [ngClass]="!haMode() ? 'flex-1 p-3 border text-left transition-all border-neon-green bg-neon-green/10' : 'flex-1 p-3 border text-left transition-all border-border hover:border-muted-foreground'"
+                >
+                  <div class="font-semibold text-foreground">Single Node</div>
+                  <div class="text-xs text-muted-foreground mt-1">1 node, lower cost, no HA</div>
+                </button>
+                <button
+                  type="button"
+                  (click)="toggleHaMode(true)"
+                  [ngClass]="haMode() ? 'flex-1 p-3 border text-left transition-all border-neon-green bg-neon-green/10' : 'flex-1 p-3 border text-left transition-all border-border hover:border-muted-foreground'"
+                >
+                  <div class="font-semibold text-foreground">High Availability</div>
+                  <div class="text-xs text-muted-foreground mt-1">3 nodes, auto-failover</div>
+                </button>
+              </div>
+            </div>
+
+            <!-- Server Type Selection -->
+            <div class="space-y-3 mb-4">
+              <label class="label">Server Type</label>
+
+              @if (serverTypesLoading()) {
+                <div class="flex items-center gap-2 text-muted-foreground py-4">
+                  <span class="spinner w-4 h-4"></span>
+                  <span>Loading server types...</span>
+                </div>
+              } @else if (serverTypesError()) {
+                <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 text-sm">
+                  {{ serverTypesError() }}
+                </div>
+              } @else {
+                <!-- Category Tabs -->
+                <div class="flex gap-2 mb-3">
+                  <button
+                    type="button"
+                    (click)="selectCategory('shared')"
+                    class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
+                    [class.bg-neon-green]="selectedCategory() === 'shared'"
+                    [class.text-bg-primary]="selectedCategory() === 'shared'"
+                    [class.border-neon-green]="selectedCategory() === 'shared'"
+                    [class.bg-transparent]="selectedCategory() !== 'shared'"
+                    [class.text-muted-foreground]="selectedCategory() !== 'shared'"
+                    [class.border-border]="selectedCategory() !== 'shared'"
+                  >
+                    Shared vCPU
+                  </button>
+                  <button
+                    type="button"
+                    (click)="selectCategory('dedicated')"
+                    class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
+                    [class.bg-neon-green]="selectedCategory() === 'dedicated'"
+                    [class.text-bg-primary]="selectedCategory() === 'dedicated'"
+                    [class.border-neon-green]="selectedCategory() === 'dedicated'"
+                    [class.bg-transparent]="selectedCategory() !== 'dedicated'"
+                    [class.text-muted-foreground]="selectedCategory() !== 'dedicated'"
+                    [class.border-border]="selectedCategory() !== 'dedicated'"
+                  >
+                    Dedicated vCPU
+                  </button>
+                </div>
+
+                <!-- Server Type Cards -->
+                <div class="grid grid-cols-4 gap-2">
+                  @for (type of currentServerTypes(); track type.name) {
+                    <button
+                      type="button"
+                      (click)="selectServerType(type)"
+                      [ngClass]="getServerTypeClass(type)"
+                      [disabled]="!isServerTypeAvailable(type)"
+                    >
+                      <div class="font-semibold text-foreground text-sm">{{ type.name }}</div>
+                      <div class="text-xs text-muted-foreground space-y-0.5 mt-1">
+                        <div>{{ type.cores }} vCPU</div>
+                        <div>{{ type.memory }} GB</div>
+                      </div>
+                    </button>
+                  }
+                </div>
+              }
+            </div>
+
             <!-- Editable Cluster Name -->
             <div class="space-y-2 mb-4">
               <label class="label">Cluster Name</label>
@@ -339,22 +426,22 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
 
             <!-- Node Locations -->
             <div class="space-y-4 mb-6">
-              <label class="label">Node Locations</label>
+              <label class="label">Node {{ haMode() ? 'Locations' : 'Location' }}</label>
               <p class="text-xs text-muted-foreground -mt-2">
-                Select a region for each node. Pre-filled from source cluster.
+                Select a region for {{ haMode() ? 'each node' : 'your node' }}. Pre-filled from source cluster.
               </p>
 
-              @if (locationsLoading()) {
+              @if (locationsLoading() || serverTypesLoading()) {
                 <div class="flex items-center gap-2 text-muted-foreground py-4">
                   <span class="spinner w-4 h-4"></span>
                   <span>Loading locations...</span>
                 </div>
               } @else {
                 <div class="space-y-3">
-                  @for (nodeIndex of [0, 1, 2]; track nodeIndex) {
+                  @for (nodeIndex of (haMode() ? [0, 1, 2] : [0]); track nodeIndex) {
                     <div class="flex items-center gap-4">
                       <div class="w-20 flex-shrink-0">
-                        <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Node {{ nodeIndex + 1 }}</span>
+                        <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ haMode() ? 'Node ' + (nodeIndex + 1) : 'Node' }}</span>
                       </div>
 
                       <div class="relative flex-1">
@@ -389,7 +476,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
 
                         @if (openDropdown() === nodeIndex) {
                           <div class="absolute z-50 w-full mt-1 bg-bg-secondary border border-border shadow-lg shadow-black/50 max-h-48 overflow-y-auto">
-                            @for (loc of locations(); track loc.id) {
+                            @for (loc of filteredLocations(); track loc.id) {
                               <button
                                 type="button"
                                 (click)="loc.available && selectRestoreLocation(nodeIndex, loc.id)"
@@ -446,8 +533,8 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                 Cancel
               </button>
               <button
-                (click)="restoreBackup()"
-                [disabled]="restoring() || !canRestore()"
+                type="button"
+                (click)="onRestoreClick()"
                 class="btn-primary"
               >
                 @if (restoring()) {
@@ -470,6 +557,7 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   @Input() clusterSlug: string = '';
   @Input() isClusterRunning: boolean = false;
   @Input() clusterNodes: ClusterNode[] = [];
+  @Input() sourceNodeSize: string = 'cx23';
 
   loading = signal(true);
   creating = signal(false);
@@ -491,6 +579,40 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   restoreNodeRegions = signal<string[]>(['', '', '']);
   restoreClusterName = signal('');
   openDropdown = signal<number | null>(null);
+
+  // HA mode and server type selection for restore
+  haMode = signal<boolean>(true);
+  selectedCategory = signal<'shared' | 'dedicated'>('shared');
+  selectedServerType = signal<string>('cx23');
+  serverTypes = signal<ServerTypesResponse | null>(null);
+  serverTypesLoading = signal(false);
+  serverTypesError = signal<string | null>(null);
+
+  // Computed: current server types based on selected category
+  currentServerTypes = computed(() => {
+    const types = this.serverTypes();
+    if (!types) return [];
+    return this.selectedCategory() === 'shared' ? types.shared : types.dedicated;
+  });
+
+  // Computed: filter locations based on selected server type availability
+  filteredLocations = computed(() => {
+    const locs = this.locations();
+    const types = this.serverTypes();
+    const selectedType = this.selectedServerType();
+
+    if (!types) return locs;
+
+    const allTypes = [...types.shared, ...types.dedicated];
+    const serverType = allTypes.find(t => t.name === selectedType);
+
+    if (!serverType) return locs;
+
+    return locs.map(loc => ({
+      ...loc,
+      available: serverType.availableLocations.includes(loc.id)
+    }));
+  });
 
   // Backup type selector
   selectedBackupType: 'full' | 'diff' | 'incr' = 'incr';
@@ -660,16 +782,35 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     // Pre-fill cluster name
     this.restoreClusterName.set(this.getRestoredClusterName());
 
+    // Pre-fill HA mode from source cluster node count
+    const sourceNodeCount = this.clusterNodes.length;
+    this.haMode.set(sourceNodeCount === 3);
+
+    // Pre-fill server type from source cluster
+    this.selectedServerType.set(this.sourceNodeSize || 'cx23');
+
+    // Determine category based on server type
+    if (this.sourceNodeSize?.startsWith('ccx')) {
+      this.selectedCategory.set('dedicated');
+    } else {
+      this.selectedCategory.set('shared');
+    }
+
     // Pre-fill regions from source cluster nodes
     const sourceRegions = this.clusterNodes.map(n => n.location);
-    // Pad to 3 if needed
-    while (sourceRegions.length < 3) {
-      sourceRegions.push(sourceRegions[0] || 'fsn1');
+    if (this.haMode()) {
+      // Pad to 3 if needed
+      while (sourceRegions.length < 3) {
+        sourceRegions.push(sourceRegions[0] || 'fsn1');
+      }
+      this.restoreNodeRegions.set(sourceRegions.slice(0, 3));
+    } else {
+      this.restoreNodeRegions.set([sourceRegions[0] || 'fsn1']);
     }
-    this.restoreNodeRegions.set(sourceRegions.slice(0, 3));
 
-    // Load available locations
+    // Load available locations and server types
     this.loadLocations();
+    this.loadServerTypes();
 
     this.showRestoreDialog.set(true);
   }
@@ -691,6 +832,96 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
         this.notificationService.error('Failed to load locations');
       }
     });
+  }
+
+  private loadServerTypes(): void {
+    this.serverTypesLoading.set(true);
+    this.serverTypesError.set(null);
+
+    this.clusterService.getServerTypes().subscribe({
+      next: (types) => {
+        this.serverTypes.set(types);
+        this.serverTypesLoading.set(false);
+      },
+      error: (err) => {
+        this.serverTypesLoading.set(false);
+        this.serverTypesError.set(err.error?.message || 'Failed to load server types');
+      }
+    });
+  }
+
+  toggleHaMode(enabled: boolean): void {
+    if (this.haMode() === enabled) return;
+    this.haMode.set(enabled);
+
+    if (enabled) {
+      // Switch to HA: 3 nodes - copy first region to all
+      const firstRegion = this.restoreNodeRegions()[0] || 'fsn1';
+      this.restoreNodeRegions.set([firstRegion, firstRegion, firstRegion]);
+    } else {
+      // Switch to single node: keep only first region
+      const firstRegion = this.restoreNodeRegions()[0] || 'fsn1';
+      this.restoreNodeRegions.set([firstRegion]);
+    }
+  }
+
+  selectCategory(category: 'shared' | 'dedicated'): void {
+    if (this.selectedCategory() === category) return;
+    this.selectedCategory.set(category);
+
+    // Select first available server type in new category
+    const types = this.serverTypes();
+    if (types) {
+      const categoryTypes = category === 'shared' ? types.shared : types.dedicated;
+      const firstAvailable = categoryTypes.find(t => t.availableLocations.length > 0);
+      if (firstAvailable) {
+        this.selectedServerType.set(firstAvailable.name);
+        this.clearInvalidRestoreRegions();
+      }
+    }
+  }
+
+  selectServerType(type: ServerType): void {
+    if (!this.isServerTypeAvailable(type)) return;
+    this.selectedServerType.set(type.name);
+    this.clearInvalidRestoreRegions();
+  }
+
+  isServerTypeAvailable(type: ServerType): boolean {
+    return type.availableLocations.length > 0;
+  }
+
+  getServerTypeClass(type: ServerType): string {
+    const isSelected = this.selectedServerType() === type.name;
+    const available = this.isServerTypeAvailable(type);
+
+    if (!available) {
+      return 'p-3 border text-left transition-all opacity-40 cursor-not-allowed border-border';
+    }
+    if (isSelected) {
+      return 'p-3 border text-left transition-all border-neon-green bg-neon-green/10';
+    }
+    return 'p-3 border text-left transition-all border-border hover:border-muted-foreground';
+  }
+
+  private clearInvalidRestoreRegions(): void {
+    const regions = [...this.restoreNodeRegions()];
+    const filtered = this.filteredLocations();
+    let changed = false;
+
+    regions.forEach((regionId, index) => {
+      if (regionId) {
+        const loc = filtered.find(l => l.id === regionId);
+        if (!loc || !loc.available) {
+          regions[index] = '';
+          changed = true;
+        }
+      }
+    });
+
+    if (changed) {
+      this.restoreNodeRegions.set(regions);
+    }
   }
 
   toggleRestoreDropdown(nodeIndex: number, event: Event): void {
@@ -715,27 +946,71 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   getSelectedRestoreLocation(nodeIndex: number): Location | null {
     const regionId = this.restoreNodeRegions()[nodeIndex];
     if (!regionId) return null;
-    return this.locations().find(loc => loc.id === regionId) || null;
+    return this.filteredLocations().find(loc => loc.id === regionId) || null;
   }
 
   canRestore(): boolean {
     const regions = this.restoreNodeRegions();
     const name = this.restoreClusterName();
-    const allRegionsSelected = regions.every(r => r !== '');
+    const expectedNodeCount = this.haMode() ? 3 : 1;
+
+    const allRegionsSelected = regions.length === expectedNodeCount && regions.every(r => r !== '');
     const allRegionsAvailable = regions.every(r => {
-      const loc = this.locations().find(l => l.id === r);
+      const loc = this.filteredLocations().find(l => l.id === r);
       return loc?.available === true;
     });
     const validName = name.length >= 3 && /^[a-z][a-z0-9-]*$/.test(name);
-    return allRegionsSelected && allRegionsAvailable && validName && !this.locationsLoading();
+    const serverTypeSelected = !!this.selectedServerType();
+
+    return allRegionsSelected && allRegionsAvailable && validName &&
+           !this.locationsLoading() && !this.serverTypesLoading() && serverTypeSelected;
   }
 
   hasUnavailableRestoreSelections(): boolean {
     return this.restoreNodeRegions().some(r => {
       if (!r) return false;
-      const loc = this.locations().find(l => l.id === r);
+      const loc = this.filteredLocations().find(l => l.id === r);
       return loc && !loc.available;
     });
+  }
+
+  onRestoreClick(): void {
+    if (this.restoring()) return;
+
+    const name = this.restoreClusterName();
+    const regions = this.restoreNodeRegions();
+    const expectedNodeCount = this.haMode() ? 3 : 1;
+
+    // Validate cluster name
+    if (!name || name.length < 3) {
+      this.notificationService.error('Cluster name must be at least 3 characters');
+      return;
+    }
+
+    if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+      this.notificationService.error('Cluster name must start with a letter and contain only lowercase letters, numbers, and hyphens');
+      return;
+    }
+
+    // Validate server type
+    if (!this.selectedServerType()) {
+      this.notificationService.error('Please select a server type');
+      return;
+    }
+
+    // Validate regions
+    if (regions.length !== expectedNodeCount || regions.some(r => !r)) {
+      this.notificationService.error(`Please select a region for ${expectedNodeCount === 1 ? 'your node' : 'all ' + expectedNodeCount + ' nodes'}`);
+      return;
+    }
+
+    if (this.hasUnavailableRestoreSelections()) {
+      this.notificationService.error('One or more selected regions are unavailable. Please select different regions.');
+      return;
+    }
+
+    // All validations passed
+    this.restoreBackup();
   }
 
   restoreBackup(): void {
@@ -747,7 +1022,8 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     const request = {
       createNewCluster: true,
       newClusterName: this.restoreClusterName(),
-      nodeRegions: this.restoreNodeRegions()
+      nodeRegions: this.restoreNodeRegions(),
+      nodeSize: this.selectedServerType()
     };
 
     this.backupService.restoreBackup(this.clusterId, backup.id, request).subscribe({
