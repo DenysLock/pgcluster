@@ -424,11 +424,11 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               </p>
             </div>
 
-            <!-- Node Locations -->
+            <!-- Node Locations as Button Grid -->
             <div class="space-y-4 mb-6">
               <label class="label">Node {{ haMode() ? 'Locations' : 'Location' }}</label>
               <p class="text-xs text-muted-foreground -mt-2">
-                Select a region for {{ haMode() ? 'each node' : 'your node' }}. Pre-filled from source cluster.
+                Select a region for {{ haMode() ? 'each node' : 'your node' }}. Grayed buttons are unavailable for the selected server type.
               </p>
 
               @if (locationsLoading() || serverTypesLoading()) {
@@ -437,68 +437,23 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                   <span>Loading locations...</span>
                 </div>
               } @else {
-                <div class="space-y-3">
+                <div class="space-y-4">
                   @for (nodeIndex of (haMode() ? [0, 1, 2] : [0]); track nodeIndex) {
-                    <div class="flex items-center gap-4">
-                      <div class="w-20 flex-shrink-0">
-                        <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ haMode() ? 'Node ' + (nodeIndex + 1) : 'Node' }}</span>
-                      </div>
-
-                      <div class="relative flex-1">
-                        <button
-                          type="button"
-                          (click)="toggleRestoreDropdown(nodeIndex, $event)"
-                          class="w-full px-4 py-3 bg-bg-tertiary border text-left flex items-center justify-between transition-colors"
-                          [class.border-neon-green]="openDropdown() === nodeIndex"
-                          [class.border-status-error]="getSelectedRestoreLocation(nodeIndex) && !getSelectedRestoreLocation(nodeIndex)?.available"
-                          [class.border-border]="openDropdown() !== nodeIndex && (!getSelectedRestoreLocation(nodeIndex) || getSelectedRestoreLocation(nodeIndex)?.available)"
-                        >
-                          @if (getSelectedRestoreLocation(nodeIndex); as loc) {
-                            <span class="flex items-center gap-3">
-                              <span class="text-xl" [class.grayscale]="!loc.available">{{ loc.flag }}</span>
-                              <span [class.text-foreground]="loc.available" [class.text-status-error]="!loc.available">{{ loc.countryName }}</span>
-                              <span class="text-muted-foreground text-sm">({{ loc.city }})</span>
-                              @if (!loc.available) {
-                                <span class="text-xs uppercase tracking-wider text-status-error border border-status-error px-2 py-0.5 ml-2">Unavailable</span>
-                              }
-                            </span>
-                          } @else {
-                            <span class="text-muted-foreground">Select location...</span>
-                          }
-                          <svg
-                            class="w-4 h-4 text-muted-foreground transition-transform"
-                            [class.rotate-180]="openDropdown() === nodeIndex"
-                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                    <div class="space-y-2">
+                      <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        {{ haMode() ? 'Node ' + (nodeIndex + 1) : 'Node' }}
+                      </span>
+                      <div class="grid grid-cols-3 md:grid-cols-6 gap-1.5">
+                        @for (loc of filteredLocations(); track loc.id) {
+                          <button
+                            type="button"
+                            (click)="selectRestoreLocation(nodeIndex, loc.id)"
+                            [ngClass]="getRestoreLocationClass(nodeIndex, loc)"
+                            [disabled]="!loc.available"
                           >
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                          </svg>
-                        </button>
-
-                        @if (openDropdown() === nodeIndex) {
-                          <div class="absolute z-50 w-full mt-1 bg-bg-secondary border border-border shadow-lg shadow-black/50 max-h-48 overflow-y-auto">
-                            @for (loc of filteredLocations(); track loc.id) {
-                              <button
-                                type="button"
-                                (click)="loc.available && selectRestoreLocation(nodeIndex, loc.id)"
-                                class="w-full px-4 py-3 flex items-center gap-3 text-left transition-colors border-b border-border last:border-0"
-                                [class.bg-neon-green]="restoreNodeRegions()[nodeIndex] === loc.id && loc.available"
-                                [class.text-bg-primary]="restoreNodeRegions()[nodeIndex] === loc.id && loc.available"
-                                [class.hover:bg-bg-tertiary]="restoreNodeRegions()[nodeIndex] !== loc.id && loc.available"
-                                [class.opacity-40]="!loc.available"
-                                [class.cursor-not-allowed]="!loc.available"
-                                [disabled]="!loc.available"
-                              >
-                                <span class="text-xl" [class.grayscale]="!loc.available">{{ loc.flag }}</span>
-                                <div class="flex-1">
-                                  <span [class.text-foreground]="loc.available">{{ loc.countryName }}</span>
-                                  <span class="text-sm ml-2 text-muted-foreground">{{ loc.city }}</span>
-                                </div>
-                                @if (!loc.available) {
-                                  <span class="text-xs uppercase tracking-wider text-status-error border border-status-error px-2 py-0.5">Unavailable</span>
-                                }
-                              </button>
-                            }
-                          </div>
+                            <span>{{ loc.flag }}</span>
+                            <span class="text-[10px] truncate">{{ loc.city }}</span>
+                          </button>
                         }
                       </div>
                     </div>
@@ -515,6 +470,10 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
             }
 
             <div class="space-y-3 mb-6 border-t border-border pt-4">
+              <div class="flex justify-between text-sm">
+                <span class="text-muted-foreground">PostgreSQL version:</span>
+                <span class="font-semibold text-foreground">{{ sourcePostgresVersion }}</span>
+              </div>
               <div class="flex justify-between text-sm">
                 <span class="text-muted-foreground">Recovery point:</span>
                 <span class="font-semibold text-foreground">{{ formatDateTime(selectedBackup()?.completedAt || selectedBackup()?.createdAt) }}</span>
@@ -558,6 +517,7 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   @Input() isClusterRunning: boolean = false;
   @Input() clusterNodes: ClusterNode[] = [];
   @Input() sourceNodeSize: string = 'cx23';
+  @Input() sourcePostgresVersion: string = '16';
 
   loading = signal(true);
   creating = signal(false);
@@ -578,8 +538,6 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   locationsLoading = signal(false);
   restoreNodeRegions = signal<string[]>(['', '', '']);
   restoreClusterName = signal('');
-  openDropdown = signal<number | null>(null);
-
   // HA mode and server type selection for restore
   haMode = signal<boolean>(true);
   selectedCategory = signal<'shared' | 'dedicated'>('shared');
@@ -817,7 +775,6 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
   closeRestoreDialog(): void {
     this.showRestoreDialog.set(false);
-    this.openDropdown.set(null);
   }
 
   private loadLocations(): void {
@@ -924,29 +881,26 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     }
   }
 
-  toggleRestoreDropdown(nodeIndex: number, event: Event): void {
-    event.stopPropagation();
-    if (this.openDropdown() === nodeIndex) {
-      this.openDropdown.set(null);
-    } else {
-      this.openDropdown.set(nodeIndex);
-    }
-  }
-
   selectRestoreLocation(nodeIndex: number, locationId: string): void {
-    const loc = this.locations().find(l => l.id === locationId);
+    const loc = this.filteredLocations().find(l => l.id === locationId);
     if (!loc?.available) return;
 
     const regions = [...this.restoreNodeRegions()];
     regions[nodeIndex] = locationId;
     this.restoreNodeRegions.set(regions);
-    this.openDropdown.set(null);
   }
 
-  getSelectedRestoreLocation(nodeIndex: number): Location | null {
-    const regionId = this.restoreNodeRegions()[nodeIndex];
-    if (!regionId) return null;
-    return this.filteredLocations().find(loc => loc.id === regionId) || null;
+  getRestoreLocationClass(nodeIndex: number, loc: Location): string {
+    const base = 'px-1.5 py-2 border text-center transition-all flex flex-col items-center gap-0.5 rounded';
+    const isSelected = this.restoreNodeRegions()[nodeIndex] === loc.id;
+
+    if (!loc.available) {
+      return `${base} opacity-30 cursor-not-allowed border-border grayscale`;
+    }
+    if (isSelected) {
+      return `${base} border-neon-green bg-neon-green/10 text-foreground`;
+    }
+    return `${base} border-border hover:border-muted-foreground text-muted-foreground`;
   }
 
   canRestore(): boolean {

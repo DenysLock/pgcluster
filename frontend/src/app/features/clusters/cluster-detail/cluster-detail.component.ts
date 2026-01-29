@@ -73,6 +73,7 @@ interface ProvisioningStep {
               <div class="flex items-center gap-3">
                 <h1 class="text-xl font-semibold uppercase tracking-wider text-foreground">{{ cluster()?.name }}</h1>
                 <app-status-badge [status]="cluster()?.status || 'unknown'" />
+                <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">PG {{ cluster()?.postgresVersion }}</span>
               </div>
               <p class="text-muted-foreground text-sm mt-1">Created {{ formatDate(cluster()?.createdAt || '') }}</p>
             </div>
@@ -317,6 +318,7 @@ interface ProvisioningStep {
               [isClusterRunning]="isRunning()"
               [clusterNodes]="cluster()?.nodes || []"
               [sourceNodeSize]="cluster()?.nodeSize || 'cx23'"
+              [sourcePostgresVersion]="cluster()?.postgresVersion || '16'"
             />
           }
 

@@ -61,6 +61,7 @@ export interface RestoreRequest {
   newClusterName?: string;
   nodeRegions?: string[];
   nodeSize?: string;
+  postgresVersion?: string;
 }
 
 export interface BackupDeletionInfo {

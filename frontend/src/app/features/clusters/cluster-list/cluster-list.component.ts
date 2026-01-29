@@ -65,7 +65,10 @@ import { StatusBadgeComponent, SpinnerComponent, EmptyStateComponent } from '../
                 <tr class="border-b last:border-0 hover:bg-muted/50 transition-colors">
                   <td class="p-4">
                     <div>
-                      <p class="font-medium">{{ cluster.name }}</p>
+                      <div class="flex items-center gap-2">
+                        <p class="font-medium">{{ cluster.name }}</p>
+                        <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">PG {{ cluster.postgresVersion }}</span>
+                      </div>
                       <p class="text-sm text-muted-foreground">{{ cluster.slug }}.db.pgcluster.com</p>
                     </div>
                   </td>

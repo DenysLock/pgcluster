@@ -588,13 +588,18 @@ public class BackupService {
                     ? request.getNodeSize()
                     : sourceCluster.getNodeSize();
 
+            // Use postgresVersion from request if provided, otherwise from source cluster
+            String postgresVersion = (request != null && request.getPostgresVersion() != null)
+                    ? request.getPostgresVersion()
+                    : sourceCluster.getPostgresVersion();
+
             targetCluster = Cluster.builder()
                     .user(user)
                     .name(newClusterName)
                     .slug(slug)
                     .plan(sourceCluster.getPlan())
                     .status(Cluster.STATUS_PENDING)
-                    .postgresVersion(sourceCluster.getPostgresVersion())
+                    .postgresVersion(postgresVersion)
                     .nodeCount(nodeRegions.size())
                     .nodeSize(nodeSize)
                     .region(nodeRegions.get(0))

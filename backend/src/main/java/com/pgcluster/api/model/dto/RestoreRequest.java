@@ -56,6 +56,13 @@ public class RestoreRequest {
     private String nodeSize;
 
     /**
+     * PostgreSQL version for the restored cluster.
+     * If not provided, uses source cluster's version.
+     */
+    @Pattern(regexp = "^(14|15|16|17)$", message = "PostgreSQL version must be 14, 15, 16, or 17")
+    private String postgresVersion;
+
+    /**
      * Custom validation: if nodeRegions provided, must be exactly 1 or 3.
      * 2 nodes is disallowed because etcd quorum would be 2.
      */
