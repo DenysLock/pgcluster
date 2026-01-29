@@ -462,7 +462,8 @@ public class ProvisioningService {
                 cluster.getSlug(),
                 node.getName(),
                 node.getPublicIp(),
-                etcdCluster
+                etcdCluster,
+                cluster.getPostgresVersion()
         );
 
         // Generate patroni.yml
@@ -474,7 +475,8 @@ public class ProvisioningService {
                 etcdHosts,
                 cluster.getPostgresPassword(),
                 replicatorPassword,
-                cluster.getNodeSize()
+                cluster.getNodeSize(),
+                cluster.getPostgresVersion()
         );
 
         // Ensure config directory exists
@@ -728,7 +730,8 @@ public class ProvisioningService {
      * Passwords are loaded from .env file for security.
      */
     private String generateDockerCompose(String clusterSlug, String nodeName,
-                                         String nodeIp, String etcdCluster) {
+                                         String nodeIp, String etcdCluster,
+                                         String postgresVersion) {
         return """
             services:
               etcd:
@@ -755,7 +758,7 @@ public class ProvisioningService {
                   retries: 3
 
               patroni:
-                image: pgcluster/patroni:16
+                image: denysd1/patroni:%s
                 container_name: patroni
                 restart: unless-stopped
                 network_mode: host
@@ -829,6 +832,7 @@ public class ProvisioningService {
                 nodeIp,             // ETCD_ADVERTISE_CLIENT_URLS
                 etcdCluster,        // ETCD_INITIAL_CLUSTER
                 clusterSlug,        // ETCD_INITIAL_CLUSTER_TOKEN
+                postgresVersion,    // patroni image version
                 nodeName,           // PATRONI_NAME
                 nodeIp,             // PATRONI_RESTAPI_CONNECT_ADDRESS
                 nodeIp              // PATRONI_POSTGRESQL_CONNECT_ADDRESS
@@ -841,7 +845,7 @@ public class ProvisioningService {
     private String generatePatroniConfig(String clusterId, String clusterSlug, String nodeName,
                                          String nodeIp, String etcdHosts,
                                          String postgresPassword, String replicatorPassword,
-                                         String nodeSize) {
+                                         String nodeSize, String postgresVersion) {
         // Calculate memory settings based on node size
         MemorySettings mem = getMemorySettings(nodeSize);
 
@@ -919,7 +923,7 @@ public class ProvisioningService {
               listen: 0.0.0.0:5432
               connect_address: %s:5432
               data_dir: /var/lib/postgresql/data
-              bin_dir: /usr/lib/postgresql/16/bin
+              bin_dir: /usr/lib/postgresql/%s/bin
               pgpass: /tmp/pgpass
               authentication:
                 replication:
@@ -945,6 +949,7 @@ public class ProvisioningService {
                 postgresPassword,   // postgres password
                 replicatorPassword, // replicator password
                 nodeIp,             // postgresql connect_address
+                postgresVersion,    // bin_dir version
                 replicatorPassword, // replication password
                 postgresPassword,   // superuser password
                 recoveryConf        // recovery configuration
@@ -1486,7 +1491,8 @@ public class ProvisioningService {
                 targetCluster.getSlug(),
                 node.getName(),
                 node.getPublicIp(),
-                etcdCluster
+                etcdCluster,
+                targetCluster.getPostgresVersion()
         );
 
         // Generate patroni.yml with restore method
@@ -1499,6 +1505,7 @@ public class ProvisioningService {
                 targetCluster.getPostgresPassword(),
                 replicatorPassword,
                 targetCluster.getNodeSize(),
+                targetCluster.getPostgresVersion(),
                 sourceCluster.getSlug(),
                 backupLabel,
                 targetTime
@@ -1544,7 +1551,7 @@ public class ProvisioningService {
      */
     private String generatePatroniConfigForRestore(String clusterId, String clusterSlug, String nodeName,
                                                     String nodeIp, String etcdHosts, String postgresPassword,
-                                                    String replicatorPassword, String nodeSize,
+                                                    String replicatorPassword, String nodeSize, String postgresVersion,
                                                     String sourceClusterSlug, String backupLabel, Instant targetTime) {
 
         // Calculate PostgreSQL memory settings based on node size
@@ -1628,6 +1635,7 @@ public class ProvisioningService {
               listen: 0.0.0.0:5432
               connect_address: %s:5432
               data_dir: /var/lib/postgresql/data
+              bin_dir: /usr/lib/postgresql/%s/bin
               pgpass: /tmp/pgpass
               authentication:
                 superuser:
@@ -1661,6 +1669,7 @@ public class ProvisioningService {
                 postgresPassword,
                 replicatorPassword,
                 nodeIp,
+                postgresVersion,       // bin_dir version
                 postgresPassword,
                 replicatorPassword,
                 postgresPassword

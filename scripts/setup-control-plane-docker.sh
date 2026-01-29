@@ -360,7 +360,7 @@ services:
       retries: 3
 
   patroni:
-    image: pgcluster/patroni:16
+    image: denysd1/patroni:16
     container_name: patroni
     restart: unless-stopped
     network_mode: host
@@ -413,40 +413,15 @@ EOF"
         log_info "${CP_NAMES[$i]} configured"
     done
 
-    # Step 5b: Rebuild Patroni image on all nodes (to fix potential permission issues from snapshot)
-    log_info "Step 5b: Rebuilding Patroni image on all nodes..."
+    # Step 5b: Pull Patroni image on all nodes from Docker Hub
+    log_info "Step 5b: Pulling Patroni image on all nodes..."
 
     for ip in "${SERVER_IPS[@]}"; do
-        log_info "  Rebuilding Patroni image on $ip..."
-        ssh_cmd "$ip" 'mkdir -p /tmp/patroni-build && cd /tmp/patroni-build && \
-cat > Dockerfile << '"'"'DOCKERFILE'"'"'
-FROM postgres:16-bookworm
-RUN apt-get update && apt-get install -y python3 python3-pip python3-psycopg2 python3-yaml python3-requests curl jq iproute2 \
-    && pip3 install --break-system-packages patroni[etcd3]==4.0.4 python-etcd \
-    && rm -rf /var/lib/apt/lists/*
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-USER postgres
-EXPOSE 5432 8008
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["patroni", "/etc/patroni/patroni.yml"]
-DOCKERFILE
-
-cat > entrypoint.sh << '"'"'ENTRYPOINT'"'"'
-#!/bin/bash
-set -e
-while [ ! -f /etc/patroni/patroni.yml ]; do
-    echo "Waiting for /etc/patroni/patroni.yml..."
-    sleep 2
-done
-exec "$@"
-ENTRYPOINT
-
-chmod +x entrypoint.sh
-docker build -t pgcluster/patroni:16 . > /dev/null 2>&1' &
+        log_info "  Pulling denysd1/patroni:16 on $ip..."
+        ssh_cmd "$ip" 'docker pull denysd1/patroni:16' &
     done
     wait
-    log_info "Patroni images rebuilt on all nodes"
+    log_info "Patroni images pulled on all nodes"
 
     # Step 6: Start Docker containers on all nodes
     # Important: Start etcd on ALL nodes first (in parallel), then patroni

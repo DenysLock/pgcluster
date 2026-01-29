@@ -13,8 +13,11 @@
 #   HETZNER_API_TOKEN - Hetzner Cloud API token
 #
 # Optional:
-#   SSH_KEY_PATH  - Path to SSH private key (default: ~/.ssh/dbaas_ed25519)
-#   SNAPSHOT_NAME - Name for the snapshot (auto-generated if not set)
+#   SSH_KEY_PATH   - Path to SSH private key (default: ~/.ssh/dbaas_ed25519)
+#   SNAPSHOT_NAME  - Name for the snapshot (auto-generated if not set)
+#
+# Note: Patroni images for PostgreSQL 14-17 are pulled from Docker Hub (denysd1/patroni).
+#       The snapshot pre-pulls PG 16 (default). Other versions are pulled on-demand.
 #
 
 set -e
@@ -69,9 +72,9 @@ if [[ "$SNAPSHOT_TYPE" == "control-plane" ]]; then
     SERVER_NAME="cp-snapshot-builder-$(date +%s)"
     log_info "Creating CONTROL PLANE snapshot"
 else
-    SNAPSHOT_NAME="${SNAPSHOT_NAME:-pgcluster-node-v1}"
+    SNAPSHOT_NAME="${SNAPSHOT_NAME:-pgcluster-node-v2}"
     SERVER_NAME="snapshot-builder-$(date +%s)"
-    log_info "Creating CUSTOMER CLUSTER snapshot"
+    log_info "Creating CUSTOMER CLUSTER snapshot (supports PostgreSQL 14-17)"
 fi
 
 SERVER_TYPE="cx23"
@@ -207,6 +210,10 @@ echo "=== Pre-pulling Docker images ==="
 docker pull quay.io/coreos/etcd:v3.5.11
 docker pull prom/node-exporter:v1.7.0
 docker pull prometheuscommunity/postgres-exporter:v0.15.0
+docker pull edoburu/pgbouncer:v1.23.1-p3
+
+# Patroni images (denysd1/patroni:14-17) are pulled on-demand from Docker Hub
+# This keeps the snapshot small and version-agnostic
 
 echo "=== Cleanup ==="
 apt-get clean
@@ -217,39 +224,6 @@ echo "=== Done ==="
 IMAGES_SCRIPT
 
 log_info "Server configured"
-
-# Step 5: Build Patroni image on the server (avoids cross-platform issues)
-log_info "Step 5: Building Patroni image on server..."
-
-DOCKER_DIR="$SCRIPT_DIR/../docker/patroni"
-if [[ -d "$DOCKER_DIR" ]]; then
-    # Read local files and build on server to avoid cross-platform permission issues
-    DOCKERFILE_CONTENT=$(cat "$DOCKER_DIR/Dockerfile")
-    ENTRYPOINT_CONTENT=$(cat "$DOCKER_DIR/entrypoint.sh")
-
-    log_info "Building Patroni image directly on server..."
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -i "$SSH_KEY_PATH" root@"$SERVER_IP" << PATRONI_BUILD
-set -e
-mkdir -p /tmp/patroni-build
-cd /tmp/patroni-build
-
-cat > Dockerfile << 'DOCKERFILE'
-${DOCKERFILE_CONTENT}
-DOCKERFILE
-
-cat > entrypoint.sh << 'ENTRYPOINT'
-${ENTRYPOINT_CONTENT}
-ENTRYPOINT
-
-chmod +x entrypoint.sh
-docker build -t pgcluster/patroni:16 .
-rm -rf /tmp/patroni-build
-echo "Patroni image built successfully"
-PATRONI_BUILD
-    log_info "Patroni image built on server"
-else
-    log_warn "docker/patroni directory not found, skipping Patroni image"
-fi
 
 # Step 6: Shutdown and create snapshot
 log_info "Step 6: Creating snapshot..."
@@ -330,9 +304,11 @@ if [[ "$SNAPSHOT_TYPE" == "control-plane" ]]; then
 else
     echo "This snapshot includes:"
     echo "  - Docker"
-    echo "  - etcd, Patroni, node-exporter, postgres-exporter images"
+    echo "  - Pre-pulled images: etcd, node-exporter, postgres-exporter, pgbouncer"
     echo "  - pgBackRest (backup tool)"
     echo "  - /data/postgresql, /data/etcd directories"
+    echo ""
+    echo "Patroni images (PostgreSQL 14-17) are pulled on-demand from Docker Hub."
     echo ""
     echo "Add to your .env file:"
     echo ""

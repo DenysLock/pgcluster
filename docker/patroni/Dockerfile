@@ -1,4 +1,5 @@
-FROM postgres:16-bookworm
+ARG PG_VERSION=16
+FROM postgres:${PG_VERSION}-bookworm
 
 # Install Patroni, pgBackRest, and dependencies
 RUN apt-get update && apt-get install -y \
@@ -26,8 +27,7 @@ RUN mkdir -p /etc/patroni /var/lib/postgresql/data \
     && chown -R postgres:postgres /etc/patroni /var/lib/postgresql
 
 # Patroni entrypoint
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
 
 USER postgres
 EXPOSE 5432 8008

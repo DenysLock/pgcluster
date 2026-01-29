@@ -46,6 +46,32 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
             }
           </div>
 
+          <!-- PostgreSQL Version -->
+          <div class="space-y-2">
+            <label class="label">PostgreSQL Version</label>
+            <div class="flex gap-2">
+              @for (version of availableVersions; track version) {
+                <button
+                  type="button"
+                  (click)="postgresVersion.set(version)"
+                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
+                  [class.bg-neon-green]="postgresVersion() === version"
+                  [class.text-bg-primary]="postgresVersion() === version"
+                  [class.border-neon-green]="postgresVersion() === version"
+                  [class.bg-transparent]="postgresVersion() !== version"
+                  [class.text-muted-foreground]="postgresVersion() !== version"
+                  [class.border-border]="postgresVersion() !== version"
+                  [class.hover:border-muted-foreground]="postgresVersion() !== version"
+                >
+                  {{ version }}
+                </button>
+              }
+            </div>
+            <p class="text-xs text-muted-foreground">
+              PostgreSQL 16 is recommended for most workloads.
+            </p>
+          </div>
+
           <!-- Server Type Selection -->
           <div class="space-y-4">
             <label class="label">Server Type</label>
@@ -230,7 +256,7 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
                 <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
-                PostgreSQL 16
+                PostgreSQL {{ postgresVersion() }}
               </li>
               <li class="flex items-center gap-2">
                 <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -296,6 +322,10 @@ export class ClusterCreateComponent implements OnInit {
 
   // HA mode: true = 3 nodes (HA), false = 1 node (single)
   haMode = signal<boolean>(true);
+
+  // PostgreSQL version
+  postgresVersion = signal<string>('16');
+  availableVersions = ['14', '15', '16', '17'];
 
   // Computed: current server types based on selected category
   currentServerTypes = computed(() => {
@@ -555,7 +585,8 @@ export class ClusterCreateComponent implements OnInit {
     const request = {
       name: this.form.get('name')?.value,
       nodeSize: this.selectedServerType(),
-      nodeRegions: this.nodeRegions()
+      nodeRegions: this.nodeRegions(),
+      postgresVersion: this.postgresVersion()
     };
 
     this.clusterService.createCluster(request).subscribe({

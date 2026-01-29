@@ -123,6 +123,7 @@ export interface CreateClusterRequest {
   name: string;
   nodeSize: string;       // "cx23", "ccx13", etc.
   nodeRegions: string[];  // ["fsn1", "hel1", "nbg1"]
+  postgresVersion?: string; // "14", "15", "16", "17"
 }
 
 // Server type with specs and availability
