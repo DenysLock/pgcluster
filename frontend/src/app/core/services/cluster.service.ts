@@ -27,7 +27,9 @@ export class ClusterService {
     return this.http.get<ClusterListResponse>(`${environment.apiUrl}/api/v1/clusters`).pipe(
       map(response => {
         const items = response?.clusters || [];
-        return items.map(item => toCluster(item));
+        return items
+          .map(item => toCluster(item))
+          .filter(cluster => cluster.status !== 'deleted');
       }),
       tap(clusters => this.clustersSignal.set(clusters))
     );
@@ -67,9 +69,9 @@ export class ClusterService {
   deleteCluster(id: string): Observable<void> {
     return this.http.delete<void>(`${environment.apiUrl}/api/v1/clusters/${id}`).pipe(
       tap(() => {
-        // Update cluster status to 'deleted' instead of removing from list
+        // Remove deleted cluster from the list
         this.clustersSignal.update(clusters =>
-          clusters.map(c => c.id === id ? { ...c, status: 'deleted' } : c)
+          clusters.filter(c => c.id !== id)
         );
       })
     );

@@ -15,33 +15,33 @@ type StatusType = 'pending' | 'creating' | 'provisioning' | 'forming' | 'running
 })
 export class StatusBadgeComponent {
   @Input() status: StatusType = 'unknown';
-  @Input() size: 'sm' | 'md' = 'md';
+  @Input() size: 'sm' | 'md' = 'sm'; // Default to sm for consistency
 
   get displayText(): string {
     return this.status.toUpperCase();
   }
 
   get badgeClasses(): string {
-    const base = 'inline-flex items-center font-semibold uppercase tracking-wide border';
-    const sizeClasses = this.size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-3 py-1 text-sm';
+    // Use unified badge class from styles.scss
+    const base = 'badge';
 
     const colorClasses: Record<string, string> = {
-      running: 'border-status-running text-status-running',
-      ready: 'border-status-running text-status-running',
-      leader: 'border-neon-green text-neon-green',
-      creating: 'border-status-warning text-status-warning',
-      provisioning: 'border-status-warning text-status-warning',
-      forming: 'border-status-warning text-status-warning',
-      pending: 'border-status-warning text-status-warning',
-      degraded: 'border-status-warning text-status-warning',
-      draining: 'border-status-warning text-status-warning',
-      replica: 'border-neon-cyan text-neon-cyan',
-      error: 'border-status-error text-status-error',
-      deleting: 'border-status-error text-status-error',
-      deleted: 'border-status-stopped text-status-stopped',
-      unknown: 'border-status-stopped text-status-stopped',
+      running: 'badge-success',
+      ready: 'badge-success',
+      leader: 'badge-success',
+      creating: 'badge-warning',
+      provisioning: 'badge-warning',
+      forming: 'badge-warning',
+      pending: 'badge-warning',
+      degraded: 'badge-warning',
+      draining: 'badge-warning',
+      replica: 'badge-info',
+      error: 'badge-error',
+      deleting: 'badge-error',
+      deleted: 'badge-muted',
+      unknown: 'badge-muted',
     };
 
-    return `${base} ${sizeClasses} ${colorClasses[this.status] || colorClasses['unknown']}`;
+    return `${base} ${colorClasses[this.status] || colorClasses['unknown']}`;
   }
 }

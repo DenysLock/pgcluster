@@ -12,14 +12,13 @@ import { POLLING_INTERVALS } from '../../../core/constants';
   standalone: true,
   imports: [CommonModule, RouterLink, FormsModule],
   template: `
-    <aside class="w-64 bg-bg-secondary border-r border-border flex flex-col h-full">
+    <aside class="w-64 bg-white border-r border-border flex flex-col h-full">
       <!-- Add Cluster Button -->
       <div class="p-4">
         <a
           routerLink="/clusters/new"
-          class="btn-primary w-full text-center block py-4 text-base"
-          [class.bg-neon-green]="isCreateRoute()"
-          [class.text-bg-primary]="isCreateRoute()"
+          class="btn-primary w-full text-center block py-3"
+          [class.bg-blue-700]="isCreateRoute()"
         >
           + ADD CLUSTER
         </a>
@@ -31,7 +30,7 @@ import { POLLING_INTERVALS } from '../../../core/constants';
           type="text"
           [(ngModel)]="searchQuery"
           placeholder="Search clusters..."
-          class="input text-sm py-3"
+          class="input text-sm"
         />
       </div>
 
@@ -54,7 +53,7 @@ import { POLLING_INTERVALS } from '../../../core/constants';
             @for (cluster of filteredClusters(); track cluster.id) {
               <a
                 [routerLink]="['/clusters', cluster.id]"
-                class="flex items-center justify-between px-3 py-3 transition-colors group border-b border-border"
+                class="flex items-center justify-between px-3 py-3 rounded transition-colors group border-b border-border"
                 [class.bg-bg-tertiary]="isSelected(cluster.id)"
                 [class.text-foreground]="isSelected(cluster.id)"
                 [class.text-muted-foreground]="!isSelected(cluster.id)"
@@ -62,8 +61,8 @@ import { POLLING_INTERVALS } from '../../../core/constants';
                 [class.hover:text-foreground]="!isSelected(cluster.id)"
               >
                 <div class="flex-1 min-w-0 mr-3">
-                  <div class="text-base font-medium truncate">{{ cluster.name }}</div>
-                  <div class="text-sm text-muted-foreground truncate">{{ cluster.connection?.hostname || cluster.slug }}</div>
+                  <div class="text-sm font-medium truncate">{{ cluster.name }}</div>
+                  <div class="text-xs text-muted-foreground truncate">{{ cluster.connection?.hostname || cluster.slug }}</div>
                 </div>
                 <span
                   class="status-dot flex-shrink-0"
@@ -80,7 +79,7 @@ import { POLLING_INTERVALS } from '../../../core/constants';
 
       <!-- Footer -->
       <div class="p-4 border-t border-border">
-        <div class="text-xs text-muted-foreground text-center">
+        <div class="text-sm text-muted-foreground text-center">
           {{ filteredClusters().length }} cluster{{ filteredClusters().length !== 1 ? 's' : '' }}
         </div>
       </div>

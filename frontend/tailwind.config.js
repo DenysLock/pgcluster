@@ -17,66 +17,71 @@ module.exports = {
       },
     },
     extend: {
+    fontSize: {
+            'xs': ['15px', { lineHeight: '24px' }],   // small - metadata, badges
+            'sm': ['18px', { lineHeight: '28px' }],   // medium - body text
+            'lg': ['22px', { lineHeight: '34px' }],   // large - headings
+          },
       colors: {
-        // Background colors
+        // Background colors - Light theme
         bg: {
-          primary: '#0a0a0a',
-          secondary: '#111111',
-          tertiary: '#1a1a1a',
+          primary: '#F8FAFC',    // slate-50 - main background
+          secondary: '#FFFFFF',  // white - cards, panels
+          tertiary: '#F1F5F9',   // slate-100 - hover states
         },
-        // Status colors
+        // Status colors - adjusted for light backgrounds
         status: {
-          running: '#00ff00',
-          warning: '#ffaa00',
-          error: '#ff3333',
-          stopped: '#666666',
+          running: '#22C55E',    // green-500
+          warning: '#F59E0B',    // amber-500
+          error: '#EF4444',      // red-500
+          stopped: '#94A3B8',    // slate-400
         },
-        // Neon accent colors
+        // Accent colors - blue theme
         neon: {
-          green: '#00ff00',
-          cyan: '#00aaff',
-          purple: '#aa00ff',
+          green: '#2563EB',      // blue-600 (primary actions)
+          cyan: '#3B82F6',       // blue-500 (secondary accent)
+          purple: '#7C3AED',     // violet-600
         },
-        // Legacy color mappings for existing components
-        border: '#222222',
-        input: '#1a1a1a',
-        ring: '#00ff00',
-        background: '#0a0a0a',
-        foreground: '#e0e0e0',
+        // Legacy color mappings
+        border: '#E2E8F0',       // slate-200
+        input: '#F1F5F9',        // slate-100
+        ring: '#3B82F6',         // blue-500
+        background: '#F8FAFC',   // slate-50
+        foreground: '#1E293B',   // slate-800
         primary: {
-          DEFAULT: '#00ff00',
-          foreground: '#0a0a0a',
+          DEFAULT: '#2563EB',    // blue-600
+          foreground: '#FFFFFF',
         },
         secondary: {
-          DEFAULT: '#1a1a1a',
-          foreground: '#e0e0e0',
+          DEFAULT: '#F1F5F9',    // slate-100
+          foreground: '#1E293B', // slate-800
         },
         destructive: {
-          DEFAULT: '#ff3333',
-          foreground: '#ffffff',
+          DEFAULT: '#EF4444',    // red-500
+          foreground: '#FFFFFF',
         },
         muted: {
-          DEFAULT: '#1a1a1a',
-          foreground: '#999999',
+          DEFAULT: '#F1F5F9',    // slate-100
+          foreground: '#64748B', // slate-500
         },
         accent: {
-          DEFAULT: '#00aaff',
-          foreground: '#0a0a0a',
+          DEFAULT: '#3B82F6',    // blue-500
+          foreground: '#FFFFFF',
         },
         popover: {
-          DEFAULT: '#111111',
-          foreground: '#e0e0e0',
+          DEFAULT: '#FFFFFF',
+          foreground: '#1E293B',
         },
         card: {
-          DEFAULT: '#111111',
-          foreground: '#e0e0e0',
+          DEFAULT: '#FFFFFF',
+          foreground: '#1E293B',
         },
       },
       borderRadius: {
-        lg: '0',
-        md: '0',
-        sm: '0',
-        DEFAULT: '0',
+        lg: '0.5rem',
+        md: '0.375rem',
+        sm: '0.25rem',
+        DEFAULT: '0.25rem',
         none: '0',
       },
       keyframes: {

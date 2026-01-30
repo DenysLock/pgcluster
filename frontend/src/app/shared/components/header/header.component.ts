@@ -9,10 +9,10 @@ import { ClusterService } from '../../../core/services/cluster.service';
   standalone: true,
   imports: [CommonModule, RouterLink],
   template: `
-    <header class="h-14 bg-bg-secondary border-b border-border flex items-center justify-between px-6">
+    <header class="h-14 bg-white border-b border-border flex items-center justify-between px-6">
       <!-- Left: Logo + Status Summary -->
       <div class="flex items-center gap-6">
-        <a routerLink="/" class="text-neon-cyan font-bold text-lg tracking-wider hover:text-neon-cyan">
+        <a routerLink="/" class="text-primary font-bold text-lg tracking-wider hover:text-blue-700">
           PGCLUSTER
         </a>
         <!-- Status Summary -->
@@ -20,19 +20,19 @@ import { ClusterService } from '../../../core/services/cluster.service';
           @if (runningCount() > 0) {
             <div class="flex items-center gap-2">
               <span class="status-dot status-dot-running"></span>
-              <span class="text-sm font-semibold text-status-running">{{ runningCount() }} RUNNING</span>
+              <span class="text-xs font-semibold text-status-running">{{ runningCount() }} RUNNING</span>
             </div>
           }
           @if (warningCount() > 0) {
             <div class="flex items-center gap-2">
               <span class="status-dot status-dot-warning"></span>
-              <span class="text-sm font-semibold text-status-warning">{{ warningCount() }} WARNING</span>
+              <span class="text-xs font-semibold text-status-warning">{{ warningCount() }} WARNING</span>
             </div>
           }
           @if (errorCount() > 0) {
             <div class="flex items-center gap-2">
               <span class="status-dot status-dot-error"></span>
-              <span class="text-sm font-semibold text-status-error">{{ errorCount() }} ERROR</span>
+              <span class="text-xs font-semibold text-status-error">{{ errorCount() }} ERROR</span>
             </div>
           }
         </div>
@@ -57,7 +57,7 @@ import { ClusterService } from '../../../core/services/cluster.service';
         </button>
 
         @if (menuOpen) {
-          <div class="absolute right-0 top-full mt-1 w-48 bg-bg-secondary border border-border shadow-lg z-50">
+          <div class="absolute right-0 top-full mt-1 w-48 bg-white border border-border rounded shadow-lg z-50">
             <a
               routerLink="/settings"
               (click)="menuOpen = false"

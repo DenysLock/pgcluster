@@ -10,14 +10,14 @@ import { CommonModule } from '@angular/common';
       <div class="fixed inset-0 z-50 flex items-center justify-center">
         <!-- Backdrop -->
         <div
-          class="fixed inset-0 bg-black/80"
+          class="fixed inset-0 bg-slate-900/50"
           (click)="onCancel()"
         ></div>
 
         <!-- Dialog -->
-        <div class="relative bg-bg-secondary border border-border shadow-lg p-6 w-full max-w-md mx-4">
-          <h2 class="text-lg font-semibold uppercase tracking-wider text-foreground mb-2">{{ title }}</h2>
-          <p class="text-muted-foreground mb-6">{{ message }}</p>
+        <div class="relative bg-white border border-border rounded-lg shadow-lg p-6 w-full max-w-md mx-4">
+          <h2 class="text-lg font-semibold text-foreground mb-2">{{ title }}</h2>
+          <p class="text-sm text-muted-foreground mb-6">{{ message }}</p>
 
           <div class="flex justify-end gap-3">
             <button

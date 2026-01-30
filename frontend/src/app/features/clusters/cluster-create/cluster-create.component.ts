@@ -14,7 +14,7 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
     <div class="max-w-3xl mx-auto space-y-6">
       <!-- Header -->
       <div>
-        <h1 class="text-xl font-semibold uppercase tracking-wider text-foreground">Create Cluster</h1>
+        <h1 class="text-lg font-bold text-foreground">Create Cluster</h1>
         <p class="text-muted-foreground text-sm mt-1">Deploy a new PostgreSQL cluster</p>
       </div>
 
@@ -54,10 +54,10 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
                 <button
                   type="button"
                   (click)="postgresVersion.set(version)"
-                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
-                  [class.bg-neon-green]="postgresVersion() === version"
-                  [class.text-bg-primary]="postgresVersion() === version"
-                  [class.border-neon-green]="postgresVersion() === version"
+                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border rounded transition-colors"
+                  [class.bg-primary]="postgresVersion() === version"
+                  [class.text-white]="postgresVersion() === version"
+                  [class.border-primary]="postgresVersion() === version"
                   [class.bg-transparent]="postgresVersion() !== version"
                   [class.text-muted-foreground]="postgresVersion() !== version"
                   [class.border-border]="postgresVersion() !== version"
@@ -91,10 +91,10 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
                 <button
                   type="button"
                   (click)="selectCategory('shared')"
-                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
-                  [class.bg-neon-green]="selectedCategory() === 'shared'"
-                  [class.text-bg-primary]="selectedCategory() === 'shared'"
-                  [class.border-neon-green]="selectedCategory() === 'shared'"
+                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border rounded transition-colors"
+                  [class.bg-primary]="selectedCategory() === 'shared'"
+                  [class.text-white]="selectedCategory() === 'shared'"
+                  [class.border-primary]="selectedCategory() === 'shared'"
                   [class.bg-transparent]="selectedCategory() !== 'shared'"
                   [class.text-muted-foreground]="selectedCategory() !== 'shared'"
                   [class.border-border]="selectedCategory() !== 'shared'"
@@ -105,10 +105,10 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
                 <button
                   type="button"
                   (click)="selectCategory('dedicated')"
-                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
-                  [class.bg-neon-green]="selectedCategory() === 'dedicated'"
-                  [class.text-bg-primary]="selectedCategory() === 'dedicated'"
-                  [class.border-neon-green]="selectedCategory() === 'dedicated'"
+                  class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border rounded transition-colors"
+                  [class.bg-primary]="selectedCategory() === 'dedicated'"
+                  [class.text-white]="selectedCategory() === 'dedicated'"
+                  [class.border-primary]="selectedCategory() === 'dedicated'"
                   [class.bg-transparent]="selectedCategory() !== 'dedicated'"
                   [class.text-muted-foreground]="selectedCategory() !== 'dedicated'"
                   [class.border-border]="selectedCategory() !== 'dedicated'"
@@ -149,17 +149,17 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
               <button
                 type="button"
                 (click)="toggleHaMode(false)"
-                [ngClass]="!haMode() ? 'flex-1 p-4 border text-left transition-all border-neon-green bg-neon-green/10' : 'flex-1 p-4 border text-left transition-all border-border hover:border-muted-foreground'"
+                [ngClass]="!haMode() ? 'flex-1 p-4 border rounded text-left transition-all border-primary bg-primary/10' : 'flex-1 p-4 border rounded text-left transition-all border-border hover:border-muted-foreground'"
               >
-                <div class="font-semibold text-foreground">Single Node</div>
+                <div class="text-sm font-semibold text-foreground">Single Node</div>
                 <div class="text-xs text-muted-foreground mt-1">1 node, lower cost, no HA</div>
               </button>
               <button
                 type="button"
                 (click)="toggleHaMode(true)"
-                [ngClass]="haMode() ? 'flex-1 p-4 border text-left transition-all border-neon-green bg-neon-green/10' : 'flex-1 p-4 border text-left transition-all border-border hover:border-muted-foreground'"
+                [ngClass]="haMode() ? 'flex-1 p-4 border rounded text-left transition-all border-primary bg-primary/10' : 'flex-1 p-4 border rounded text-left transition-all border-border hover:border-muted-foreground'"
               >
-                <div class="font-semibold text-foreground">High Availability</div>
+                <div class="text-sm font-semibold text-foreground">High Availability</div>
                 <div class="text-xs text-muted-foreground mt-1">3 nodes, auto-failover</div>
               </button>
             </div>
@@ -188,7 +188,7 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
                     <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       {{ haMode() ? 'Node ' + (nodeIndex + 1) : 'Node' }}
                     </span>
-                    <div class="grid grid-cols-3 md:grid-cols-6 gap-1.5">
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
                       @for (loc of filteredLocations(); track loc.id) {
                         <button
                           type="button"
@@ -197,7 +197,7 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
                           [disabled]="!loc.available"
                         >
                           <span>{{ loc.flag }}</span>
-                          <span class="text-[10px] truncate">{{ loc.city }}</span>
+                          <span class="text-xs truncate">{{ loc.city }}</span>
                         </button>
                       }
                     </div>
@@ -208,58 +208,58 @@ import { Location, ServerType, ServerTypesResponse } from '../../../core/models'
           </div>
 
           <!-- Features -->
-          <div class="bg-bg-tertiary border border-border p-4 space-y-3">
+          <div class="bg-bg-tertiary border border-border rounded p-4 space-y-3">
             <h3 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               {{ haMode() ? 'HA cluster includes:' : 'Single node includes:' }}
             </h3>
-            <ul class="grid gap-2 text-sm text-gray-300">
+            <ul class="grid gap-2 text-sm text-foreground">
               @if (haMode()) {
                 <li class="flex items-center gap-2">
-                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                   </svg>
                   3-node high availability cluster
                 </li>
                 <li class="flex items-center gap-2">
-                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                   </svg>
                   Automatic failover with Patroni
                 </li>
               } @else {
                 <li class="flex items-center gap-2">
-                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                   </svg>
                   Single node deployment
                 </li>
                 <li class="flex items-center gap-2">
-                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                   </svg>
                   Auto-restart on crash
                 </li>
                 <li class="flex items-center gap-2">
-                  <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                   </svg>
                   Upgrade path to 3-node HA
                 </li>
               }
               <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
                 PgBouncer connection pooling
               </li>
               <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
                 PostgreSQL {{ postgresVersion() }}
               </li>
               <li class="flex items-center gap-2">
-                <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                 </svg>
                 SSL/TLS encryption
@@ -447,7 +447,7 @@ export class ClusterCreateComponent implements OnInit {
   }
 
   getServerTypeClass(type: ServerType): string {
-    const base = 'p-4 border text-left transition-all';
+    const base = 'p-4 border rounded text-left transition-all';
     const isSelected = this.selectedServerType() === type.name;
     const available = this.isAvailable(type);
 
@@ -455,7 +455,7 @@ export class ClusterCreateComponent implements OnInit {
       return `${base} opacity-40 cursor-not-allowed border-border`;
     }
     if (isSelected) {
-      return `${base} border-neon-green bg-neon-green/10`;
+      return `${base} border-primary bg-primary/10`;
     }
     return `${base} border-border hover:border-muted-foreground`;
   }
@@ -510,9 +510,9 @@ export class ClusterCreateComponent implements OnInit {
       return `${base} opacity-30 cursor-not-allowed border-border grayscale`;
     }
     if (isSelected) {
-      return `${base} border-neon-green bg-neon-green/10`;
+      return `${base} border-primary bg-primary/10 text-foreground`;
     }
-    return `${base} border-border hover:border-muted-foreground`;
+    return `${base} border-border hover:border-muted-foreground text-muted-foreground`;
   }
 
   canSubmit(): boolean {

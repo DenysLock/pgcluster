@@ -71,11 +71,11 @@ interface ProvisioningStep {
           <div class="flex items-start justify-between">
             <div>
               <div class="flex items-center gap-3">
-                <h1 class="text-xl font-semibold uppercase tracking-wider text-foreground">{{ cluster()?.name }}</h1>
+                <h1 class="text-lg font-semibold text-foreground">{{ cluster()?.name }}</h1>
                 <app-status-badge [status]="cluster()?.status || 'unknown'" />
-                <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">PG {{ cluster()?.postgresVersion }}</span>
+                <span class="badge badge-info">PG {{ cluster()?.postgresVersion }}</span>
               </div>
-              <p class="text-muted-foreground text-sm mt-1">Created {{ formatDate(cluster()?.createdAt || '') }}</p>
+              <p class="text-muted-foreground text-xs mt-1">Created {{ formatDate(cluster()?.createdAt || '') }}</p>
             </div>
           </div>
 
@@ -88,13 +88,13 @@ interface ProvisioningStep {
                 <div class="flex items-center gap-3">
                   <!-- Step indicator -->
                   @if (step.id < currentStep()) {
-                    <span class="w-7 h-7 bg-neon-green text-bg-primary flex items-center justify-center text-sm font-semibold">
+                    <span class="w-7 h-7 bg-status-running text-white flex items-center justify-center text-sm font-semibold rounded">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
                       </svg>
                     </span>
                   } @else if (step.id === currentStep()) {
-                    <span class="w-7 h-7 bg-status-warning text-bg-primary flex items-center justify-center text-sm font-semibold animate-pulse">
+                    <span class="w-7 h-7 bg-status-warning text-white flex items-center justify-center text-sm font-semibold animate-pulse rounded">
                       {{ step.id }}
                     </span>
                   } @else {
@@ -161,13 +161,13 @@ interface ProvisioningStep {
                           </span>
                         </td>
                         <td class="px-4 py-3">
-                          <span [class]="getRoleClass(node.role)" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase">
+                          <span class="badge" [ngClass]="getRoleClass(node.role)">
                             {{ node.role || 'unknown' }}
                           </span>
                         </td>
                         <td class="px-4 py-3 font-mono text-sm text-gray-300">{{ node.ip }}</td>
                         <td class="px-4 py-3">
-                          <span [class]="getStateClass(node.state)" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase">
+                          <span class="badge" [ngClass]="getStateClass(node.state)">
                             {{ node.state || 'unknown' }}
                           </span>
                         </td>
@@ -246,10 +246,8 @@ interface ProvisioningStep {
                   <!-- Pooled Connection (Recommended) -->
                   <div class="space-y-2">
                     <div class="flex items-center gap-2">
-                      <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-green text-neon-green">
-                        Pooled (Recommended)
-                      </span>
-                      <span class="text-sm text-muted-foreground">Port 6432</span>
+                      <span class="badge badge-success">Pooled (Recommended)</span>
+                      <span class="text-xs text-muted-foreground">Port 6432</span>
                     </div>
                     <app-connection-string
                       label="Pooled Connection String"
@@ -261,10 +259,8 @@ interface ProvisioningStep {
                   <!-- Direct Connection -->
                   <div class="space-y-2">
                     <div class="flex items-center gap-2">
-                      <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">
-                        Direct
-                      </span>
-                      <span class="text-sm text-muted-foreground">Port 5432</span>
+                      <span class="badge badge-info">Direct</span>
+                      <span class="text-xs text-muted-foreground">Port 5432</span>
                     </div>
                     <app-connection-string
                       label="Direct Connection String"
@@ -274,15 +270,15 @@ interface ProvisioningStep {
                   </div>
 
                   <!-- Usage Guide -->
-                  <div class="bg-bg-tertiary border border-border p-4">
+                  <div class="bg-bg-tertiary border border-border p-4 rounded">
                     <p class="text-sm font-semibold mb-2 text-foreground">When to use each connection</p>
-                    <div class="grid gap-2 text-sm text-gray-300">
+                    <div class="grid gap-2 text-sm text-muted-foreground">
                       <div class="flex items-start gap-2">
-                        <span class="text-neon-green font-mono shrink-0">6432</span>
+                        <span class="text-green-600 font-mono shrink-0">6432</span>
                         <span>Web apps, APIs, serverless functions, high concurrency workloads</span>
                       </div>
                       <div class="flex items-start gap-2">
-                        <span class="text-neon-cyan font-mono shrink-0">5432</span>
+                        <span class="text-blue-600 font-mono shrink-0">5432</span>
                         <span>Migrations, LISTEN/NOTIFY, prepared statements, admin tools (pgAdmin, psql)</span>
                       </div>
                     </div>
@@ -365,7 +361,7 @@ interface ProvisioningStep {
       } @else {
         <div class="text-center py-12">
           <p class="text-muted-foreground">Cluster not found</p>
-          <a routerLink="/" class="text-neon-green hover:underline">Back to Clusters</a>
+          <a routerLink="/" class="text-primary hover:underline">Back to Clusters</a>
         </div>
       }
     </div>
@@ -465,22 +461,22 @@ export class ClusterDetailComponent implements OnInit, OnDestroy {
   getRoleClass(role: string | null): string {
     switch (role) {
       case 'leader':
-        return 'border border-neon-green text-neon-green';
+        return 'badge-success';
       case 'replica':
-        return 'border border-neon-cyan text-neon-cyan';
+        return 'badge-info';
       default:
-        return 'border border-border text-muted-foreground';
+        return 'badge-muted';
     }
   }
 
   getStateClass(state: string | null): string {
     switch (state) {
       case 'running':
-        return 'border border-status-running text-status-running';
+        return 'badge-success';
       case 'streaming':
-        return 'border border-neon-cyan text-neon-cyan';
+        return 'badge-info';
       default:
-        return 'border border-border text-muted-foreground';
+        return 'badge-muted';
     }
   }
 

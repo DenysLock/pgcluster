@@ -70,7 +70,7 @@ import { SpinnerComponent } from '../../../shared/components';
         <div class="mt-6 pt-4 border-t border-border">
           <p class="text-sm text-center text-muted-foreground">
             Don't have an account?
-            <a routerLink="/register" class="text-neon-green hover:underline font-medium ml-1">Sign up</a>
+            <a routerLink="/register" class="text-primary hover:underline font-medium ml-1">Sign up</a>
           </p>
         </div>
       </div>

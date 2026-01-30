@@ -27,7 +27,7 @@ import { MetricChartComponent } from './metric-chart.component';
               <span>Last updated: {{ formatTime(metrics()!.queryTime) }}</span>
             }
           </div>
-          <div class="flex items-center gap-1 bg-bg-tertiary border border-border p-1">
+          <div class="flex items-center gap-1 bg-bg-tertiary border border-border rounded p-1">
             @for (range of timeRanges; track range.value) {
               <button
                 (click)="selectRange(range.value)"
@@ -54,7 +54,7 @@ import { MetricChartComponent } from './metric-chart.component';
             <p class="text-muted-foreground mb-2">{{ error() }}</p>
             <button
               (click)="loadMetrics()"
-              class="text-sm text-neon-green hover:underline"
+              class="text-sm text-primary hover:underline"
             >
               Try again
             </button>
@@ -219,9 +219,9 @@ export class MetricsCardComponent implements OnInit, OnDestroy {
   }
 
   getButtonClass(range: TimeRange): string {
-    const base = 'px-3 py-1.5 text-sm font-semibold uppercase tracking-wide transition-colors disabled:opacity-50';
+    const base = 'px-3 py-1.5 text-sm font-semibold uppercase tracking-wide transition-colors disabled:opacity-50 rounded';
     if (this.selectedRange() === range) {
-      return `${base} bg-neon-green text-bg-primary`;
+      return `${base} bg-primary text-white`;
     }
     return `${base} text-muted-foreground hover:text-foreground`;
   }

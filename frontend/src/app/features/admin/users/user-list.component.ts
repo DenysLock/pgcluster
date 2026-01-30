@@ -12,7 +12,7 @@ import { SpinnerComponent, EmptyStateComponent } from '../../../shared/component
     <div class="space-y-6">
       <!-- Header -->
       <div>
-        <h1 class="text-2xl font-bold tracking-tight">Users</h1>
+        <h1 class="text-lg font-bold">Users</h1>
         <p class="text-muted-foreground">All registered users on the platform</p>
       </div>
 

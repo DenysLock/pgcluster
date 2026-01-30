@@ -12,7 +12,7 @@ import { CommonModule } from '@angular/common';
       [title]="copied() ? 'Copied!' : 'Copy to clipboard'"
     >
       @if (copied()) {
-        <svg class="w-4 h-4 text-neon-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
         </svg>
       } @else {
@@ -37,9 +37,9 @@ export class CopyButtonComponent {
     const base = 'inline-flex items-center justify-center text-sm font-medium transition-colors focus:outline-none disabled:pointer-events-none disabled:opacity-50';
 
     const variants: Record<string, string> = {
-      default: 'bg-neon-green text-bg-primary hover:bg-neon-green/80 h-9 px-3',
-      outline: 'border border-border bg-transparent text-foreground hover:bg-bg-tertiary h-9 px-3',
-      ghost: 'text-muted-foreground hover:text-foreground hover:bg-bg-tertiary h-8 w-8',
+      default: 'bg-primary text-white hover:bg-primary/90 h-9 px-3 rounded',
+      outline: 'border border-border bg-transparent text-foreground hover:bg-bg-tertiary h-9 px-3 rounded',
+      ghost: 'text-muted-foreground hover:text-foreground hover:bg-bg-tertiary h-8 w-8 rounded',
     };
 
     return `${base} ${variants[this.variant]}`;

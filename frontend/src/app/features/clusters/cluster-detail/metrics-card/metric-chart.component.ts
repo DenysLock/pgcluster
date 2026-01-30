@@ -17,7 +17,7 @@ import { MetricSeries } from '../../../../core/models';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="border border-border bg-bg-secondary p-4">
+    <div class="border border-border bg-white rounded p-4">
       <div class="flex items-center justify-between mb-3">
         <h4 class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{{ title }}</h4>
         @if (currentValue !== null) {
@@ -42,7 +42,7 @@ import { MetricSeries } from '../../../../core/models';
               <span class="text-muted-foreground">
                 {{ s.nodeName }}
                 @if (s.nodeRole === 'leader') {
-                  <span class="text-neon-green">(L)</span>
+                  <span class="text-primary">(L)</span>
                 }
               </span>
             </div>
@@ -81,11 +81,11 @@ export class MetricChartComponent implements AfterViewInit, OnChanges, OnDestroy
   sortedSeries: MetricSeries[] = [];
 
   private readonly colors = [
-    '#00ff00', // neon-green (leader)
-    '#00aaff', // neon-cyan (replica 1)
-    '#aa00ff', // neon-purple (replica 2)
-    '#ffaa00', // status-warning
-    '#ff3333', // status-error
+    '#2563EB', // blue-600 (leader)
+    '#3B82F6', // blue-500 (replica 1)
+    '#8B5CF6', // violet-500 (replica 2)
+    '#F59E0B', // amber-500
+    '#EF4444', // red-500
   ];
 
   ngAfterViewInit(): void {
@@ -119,7 +119,7 @@ export class MetricChartComponent implements AfterViewInit, OnChanges, OnDestroy
       },
       grid: {
         vertLines: { visible: false },
-        horzLines: { color: '#22222233' }, // border with opacity
+        horzLines: { color: '#E2E8F033' }, // border with opacity (slate-200)
       },
       rightPriceScale: {
         borderVisible: false,

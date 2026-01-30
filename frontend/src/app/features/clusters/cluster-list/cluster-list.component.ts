@@ -13,13 +13,10 @@ import { StatusBadgeComponent, SpinnerComponent, EmptyStateComponent } from '../
       <!-- Header -->
       <div class="flex items-center justify-between">
         <div>
-          <h1 class="text-2xl font-bold tracking-tight">Clusters</h1>
-          <p class="text-muted-foreground">Manage your PostgreSQL clusters</p>
+          <h1 class="text-lg font-bold tracking-tight">Clusters</h1>
+          <p class="text-sm text-muted-foreground">Manage your PostgreSQL clusters</p>
         </div>
-        <a
-          routerLink="/clusters/new"
-          class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
-        >
+        <a routerLink="/clusters/new" class="btn-primary">
           <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
           </svg>
@@ -39,53 +36,46 @@ import { StatusBadgeComponent, SpinnerComponent, EmptyStateComponent } from '../
           <svg icon class="w-6 h-6 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
           </svg>
-          <a
-            action
-            routerLink="/clusters/new"
-            class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground hover:bg-primary/90 h-10 px-4 py-2"
-          >
+          <a action routerLink="/clusters/new" class="btn-primary">
             Create your first cluster
           </a>
         </app-empty-state>
       } @else {
         <!-- Clusters Table -->
-        <div class="rounded-lg border bg-card">
+        <div class="card p-0">
           <table class="w-full">
             <thead>
-              <tr class="border-b bg-muted/50">
-                <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Name</th>
-                <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
-                <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Plan</th>
-                <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Created</th>
-                <th class="h-12 px-4 text-left align-middle font-medium text-muted-foreground"></th>
+              <tr class="border-b bg-bg-tertiary">
+                <th class="h-12 px-4 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground">Name</th>
+                <th class="h-12 px-4 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground">Status</th>
+                <th class="h-12 px-4 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground">Plan</th>
+                <th class="h-12 px-4 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground">Created</th>
+                <th class="h-12 px-4 text-left align-middle text-xs font-semibold uppercase tracking-wide text-muted-foreground"></th>
               </tr>
             </thead>
             <tbody>
               @for (cluster of clusters(); track cluster.id) {
-                <tr class="border-b last:border-0 hover:bg-muted/50 transition-colors">
+                <tr class="border-b last:border-0 hover:bg-bg-tertiary transition-colors">
                   <td class="p-4">
                     <div>
                       <div class="flex items-center gap-2">
-                        <p class="font-medium">{{ cluster.name }}</p>
-                        <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">PG {{ cluster.postgresVersion }}</span>
+                        <p class="text-sm font-medium">{{ cluster.name }}</p>
+                        <span class="badge badge-info">PG {{ cluster.postgresVersion }}</span>
                       </div>
-                      <p class="text-sm text-muted-foreground">{{ cluster.slug }}.db.pgcluster.com</p>
+                      <p class="text-xs text-muted-foreground">{{ cluster.slug }}.db.pgcluster.com</p>
                     </div>
                   </td>
                   <td class="p-4">
-                    <app-status-badge [status]="cluster.status" size="sm" />
+                    <app-status-badge [status]="cluster.status" />
                   </td>
                   <td class="p-4">
                     <span class="text-sm capitalize">{{ cluster.plan }}</span>
                   </td>
                   <td class="p-4">
-                    <span class="text-sm text-muted-foreground">{{ formatDate(cluster.createdAt) }}</span>
+                    <span class="text-xs text-muted-foreground">{{ formatDate(cluster.createdAt) }}</span>
                   </td>
                   <td class="p-4 text-right">
-                    <a
-                      [routerLink]="['/clusters', cluster.id]"
-                      class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-3"
-                    >
+                    <a [routerLink]="['/clusters', cluster.id]" class="btn-secondary text-sm py-1 px-3">
                       View
                     </a>
                   </td>

@@ -64,11 +64,11 @@ import { ConfirmDialogComponent } from '../../../../shared/components';
                     <div class="flex-1">
                       <!-- Header with badges -->
                       <div class="flex items-center gap-2 flex-wrap">
-                        <span class="font-semibold text-foreground">Database Export</span>
-                        <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">
+                        <span class="text-sm font-semibold text-foreground">Database Export</span>
+                        <span class="badge badge-info">
                           {{ exp.format || 'pg_dump' }}
                         </span>
-                        <span [class]="getStatusBadgeClasses(exp.status)" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase">
+                        <span class="badge" [ngClass]="getStatusBadgeClasses(exp.status)">
                           {{ formatStatus(exp.status) }}
                         </span>
                       </div>
@@ -137,7 +137,7 @@ import { ConfirmDialogComponent } from '../../../../shared/components';
                         <a
                           [href]="exp.downloadUrl"
                           target="_blank"
-                          class="btn inline-flex items-center h-8 px-3 text-sm bg-neon-green text-bg-primary hover:bg-neon-green/80"
+                          class="btn-secondary inline-flex items-center h-8 px-3 text-sm"
                         >
                           <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -344,14 +344,14 @@ export class ExportsCardComponent implements OnInit, OnDestroy {
   getStatusBadgeClasses(status: ExportStatus): string {
     switch (status) {
       case 'completed':
-        return 'border border-status-running text-status-running';
+        return 'badge-success';
       case 'in_progress':
       case 'pending':
-        return 'border border-status-warning text-status-warning';
+        return 'badge-warning';
       case 'failed':
-        return 'border border-status-error text-status-error';
+        return 'badge-error';
       default:
-        return 'border border-status-stopped text-status-stopped';
+        return 'badge-muted';
     }
   }
 }

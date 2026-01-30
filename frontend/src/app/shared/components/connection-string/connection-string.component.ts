@@ -18,7 +18,7 @@ import { CopyButtonComponent } from '../copy-button/copy-button.component';
         </button>
       </div>
       <div class="flex items-center gap-2">
-        <div class="flex-1 font-mono text-sm bg-bg-tertiary border border-border px-3 py-2 overflow-x-auto whitespace-nowrap text-gray-300">
+        <div class="flex-1 font-mono text-sm bg-bg-tertiary border border-border rounded px-3 py-2 overflow-x-auto whitespace-nowrap text-foreground">
           @if (masked()) {
             <span>{{ prefix }}</span><span class="password-mask"></span><span>{{ suffix }}</span>
           } @else {

@@ -12,7 +12,7 @@ import { SpinnerComponent, EmptyStateComponent } from '../../../shared/component
   template: `
     <div class="p-6">
       <div class="mb-6">
-        <h1 class="text-2xl font-bold text-foreground">All Clusters</h1>
+        <h1 class="text-lg font-bold text-foreground">All Clusters</h1>
         <p class="text-muted-foreground mt-1">View all clusters across all users</p>
       </div>
 
@@ -94,18 +94,18 @@ export class AdminClusterListComponent implements OnInit {
   getStatusClass(status: string): string {
     switch (status) {
       case 'running':
-        return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400';
+        return 'bg-green-50 text-green-700 border border-green-500';
       case 'creating':
       case 'provisioning':
       case 'forming':
-        return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400';
+        return 'bg-amber-50 text-amber-700 border border-amber-500';
       case 'error':
       case 'failed':
-        return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
+        return 'bg-red-50 text-red-700 border border-red-500';
       case 'degraded':
-        return 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400';
+        return 'bg-orange-50 text-orange-700 border border-orange-500';
       default:
-        return 'bg-gray-100 text-gray-800 dark:bg-gray-900/30 dark:text-gray-400';
+        return 'bg-slate-100 text-slate-600 border border-slate-300';
     }
   }
 

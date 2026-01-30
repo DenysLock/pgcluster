@@ -22,16 +22,16 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
         <!-- Metrics Header -->
         @if (metrics()) {
           <div class="grid grid-cols-3 gap-4">
-            <div class="p-4 bg-bg-tertiary border border-border">
-              <div class="text-2xl font-bold text-foreground">{{ metrics()!.formattedTotalSize }}</div>
+            <div class="p-4 bg-bg-tertiary border border-border rounded">
+              <div class="text-lg font-bold text-foreground">{{ metrics()!.formattedTotalSize }}</div>
               <div class="text-xs uppercase tracking-wider text-muted-foreground">Total Storage</div>
             </div>
-            <div class="p-4 bg-bg-tertiary border border-border">
-              <div class="text-2xl font-bold text-foreground">{{ metrics()!.backupCount }}</div>
+            <div class="p-4 bg-bg-tertiary border border-border rounded">
+              <div class="text-lg font-bold text-foreground">{{ metrics()!.backupCount }}</div>
               <div class="text-xs uppercase tracking-wider text-muted-foreground">Backups</div>
             </div>
-            <div class="p-4 bg-bg-tertiary border border-border">
-              <div class="text-2xl font-bold text-foreground">{{ pitrWindow() }}</div>
+            <div class="p-4 bg-bg-tertiary border border-border rounded">
+              <div class="text-lg font-bold text-foreground">{{ pitrWindow() }}</div>
               <div class="text-xs uppercase tracking-wider text-muted-foreground">PITR Available</div>
             </div>
           </div>
@@ -41,7 +41,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
             <div class="h-24 flex items-end gap-0.5">
               @for (point of metrics()!.storageTrend.slice(-30); track point.date) {
                 <div
-                  class="flex-1 bg-neon-green/20 hover:bg-neon-green/40 transition-colors min-h-[2px]"
+                  class="flex-1 bg-primary/20 hover:bg-primary/40 transition-colors min-h-[2px] rounded-t"
                   [style.height.%]="getBarHeight(point.sizeBytes)"
                   [title]="point.date + ': ' + point.formattedSize"
                 ></div>
@@ -64,7 +64,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
           <button
             (click)="createBackup()"
             [disabled]="!isClusterRunning || creating()"
-            class="btn-primary h-9 px-4"
+            class="btn-primary h-9 px-6 whitespace-nowrap"
           >
             @if (creating()) {
               <span class="spinner w-4 h-4 mr-2"></span>
@@ -105,13 +105,13 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                     <div class="flex-1">
                       <!-- Header with badges -->
                       <div class="flex items-center gap-2 flex-wrap">
-                        <span class="font-semibold text-foreground">{{ formatBackupType(backup.type) }}</span>
+                        <span class="text-sm font-semibold text-foreground">{{ formatBackupType(backup.type) }}</span>
                         @if (backup.backupType) {
-                          <span class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase border border-neon-cyan text-neon-cyan">
+                          <span class="badge badge-info">
                             {{ formatPhysicalType(backup.backupType) }}
                           </span>
                         }
-                        <span [class]="getStatusBadgeClasses(backup.status)" class="inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase">
+                        <span class="badge" [ngClass]="getStatusBadgeClasses(backup.status)">
                           {{ formatStatus(backup.status) }}
                         </span>
                       </div>
@@ -134,7 +134,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                             {{ getExpiryText(backup.expiresAt) }}
                           } @else if (backup.retentionType === 'manual') {
                             <span class="mx-1">&middot;</span>
-                            <span class="text-neon-green">Never expires</span>
+                            <span class="text-green-600">Never expires</span>
                           }
                         </div>
                       }
@@ -146,7 +146,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                             Step: {{ formatStep(backup.currentStep) }}
                           </div>
                           <div
-                            class="w-full bg-bg-tertiary h-1.5"
+                            class="w-full bg-bg-tertiary h-1.5 rounded"
                             role="progressbar"
                             [attr.aria-valuenow]="backup.progressPercent || 0"
                             aria-valuemin="0"
@@ -154,7 +154,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                             [attr.aria-label]="'Backup progress: ' + (backup.progressPercent || 0) + '%'"
                           >
                             <div
-                              class="bg-neon-green h-1.5 transition-all duration-300"
+                              class="bg-primary h-1.5 transition-all duration-300 rounded"
                               [style.width.%]="backup.progressPercent || 0"
                             ></div>
                           </div>
@@ -209,9 +209,9 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
       <!-- Delete Confirmation Dialog -->
       @if (showDeleteDialog()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center">
-          <div class="fixed inset-0 bg-black/80" (click)="closeDeleteDialog()"></div>
-          <div class="relative bg-bg-secondary border border-border shadow-lg p-6 w-full max-w-lg mx-4">
-            <h2 class="text-lg font-semibold uppercase tracking-wider text-foreground mb-4">Delete Backup</h2>
+          <div class="fixed inset-0 bg-slate-900/50" (click)="closeDeleteDialog()"></div>
+          <div class="relative bg-white border border-border shadow-lg rounded-lg p-6 w-full max-w-lg mx-4">
+            <h2 class="text-lg font-semibold text-foreground mb-4">Delete Backup</h2>
 
             @if (loadingDeletionInfo()) {
               <div class="flex items-center justify-center py-8">
@@ -304,9 +304,9 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
       <!-- Restore Confirmation Dialog -->
       @if (showRestoreDialog()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center">
-          <div class="fixed inset-0 bg-black/80" (click)="closeRestoreDialog()"></div>
-          <div class="relative bg-bg-secondary border border-border shadow-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
-            <h2 class="text-lg font-semibold uppercase tracking-wider text-foreground mb-4">Restore from Backup</h2>
+          <div class="fixed inset-0 bg-slate-900/50" (click)="closeRestoreDialog()"></div>
+          <div class="relative bg-white border border-border shadow-lg rounded-lg p-6 w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <h2 class="text-lg font-semibold text-foreground mb-4">Restore from Backup</h2>
 
             <div class="bg-status-warning/10 border border-status-warning p-4 mb-6">
               <div class="flex items-start gap-3">
@@ -329,17 +329,17 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                 <button
                   type="button"
                   (click)="toggleHaMode(false)"
-                  [ngClass]="!haMode() ? 'flex-1 p-3 border text-left transition-all border-neon-green bg-neon-green/10' : 'flex-1 p-3 border text-left transition-all border-border hover:border-muted-foreground'"
+                  [ngClass]="!haMode() ? 'flex-1 p-3 border rounded text-left transition-all border-primary bg-primary/10' : 'flex-1 p-3 border rounded text-left transition-all border-border hover:border-muted-foreground'"
                 >
-                  <div class="font-semibold text-foreground">Single Node</div>
+                  <div class="text-sm font-semibold text-foreground">Single Node</div>
                   <div class="text-xs text-muted-foreground mt-1">1 node, lower cost, no HA</div>
                 </button>
                 <button
                   type="button"
                   (click)="toggleHaMode(true)"
-                  [ngClass]="haMode() ? 'flex-1 p-3 border text-left transition-all border-neon-green bg-neon-green/10' : 'flex-1 p-3 border text-left transition-all border-border hover:border-muted-foreground'"
+                  [ngClass]="haMode() ? 'flex-1 p-3 border rounded text-left transition-all border-primary bg-primary/10' : 'flex-1 p-3 border rounded text-left transition-all border-border hover:border-muted-foreground'"
                 >
-                  <div class="font-semibold text-foreground">High Availability</div>
+                  <div class="text-sm font-semibold text-foreground">High Availability</div>
                   <div class="text-xs text-muted-foreground mt-1">3 nodes, auto-failover</div>
                 </button>
               </div>
@@ -364,10 +364,10 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                   <button
                     type="button"
                     (click)="selectCategory('shared')"
-                    class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
-                    [class.bg-neon-green]="selectedCategory() === 'shared'"
-                    [class.text-bg-primary]="selectedCategory() === 'shared'"
-                    [class.border-neon-green]="selectedCategory() === 'shared'"
+                    class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border rounded transition-colors"
+                    [class.bg-primary]="selectedCategory() === 'shared'"
+                    [class.text-white]="selectedCategory() === 'shared'"
+                    [class.border-primary]="selectedCategory() === 'shared'"
                     [class.bg-transparent]="selectedCategory() !== 'shared'"
                     [class.text-muted-foreground]="selectedCategory() !== 'shared'"
                     [class.border-border]="selectedCategory() !== 'shared'"
@@ -377,10 +377,10 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                   <button
                     type="button"
                     (click)="selectCategory('dedicated')"
-                    class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border transition-colors"
-                    [class.bg-neon-green]="selectedCategory() === 'dedicated'"
-                    [class.text-bg-primary]="selectedCategory() === 'dedicated'"
-                    [class.border-neon-green]="selectedCategory() === 'dedicated'"
+                    class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border rounded transition-colors"
+                    [class.bg-primary]="selectedCategory() === 'dedicated'"
+                    [class.text-white]="selectedCategory() === 'dedicated'"
+                    [class.border-primary]="selectedCategory() === 'dedicated'"
                     [class.bg-transparent]="selectedCategory() !== 'dedicated'"
                     [class.text-muted-foreground]="selectedCategory() !== 'dedicated'"
                     [class.border-border]="selectedCategory() !== 'dedicated'"
@@ -443,7 +443,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                       <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         {{ haMode() ? 'Node ' + (nodeIndex + 1) : 'Node' }}
                       </span>
-                      <div class="grid grid-cols-3 md:grid-cols-6 gap-1.5">
+                      <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
                         @for (loc of filteredLocations(); track loc.id) {
                           <button
                             type="button"
@@ -452,7 +452,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                             [disabled]="!loc.available"
                           >
                             <span>{{ loc.flag }}</span>
-                            <span class="text-[10px] truncate">{{ loc.city }}</span>
+                            <span class="text-xs truncate">{{ loc.city }}</span>
                           </button>
                         }
                       </div>
@@ -853,12 +853,12 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     const available = this.isServerTypeAvailable(type);
 
     if (!available) {
-      return 'p-3 border text-left transition-all opacity-40 cursor-not-allowed border-border';
+      return 'p-3 border rounded text-left transition-all opacity-40 cursor-not-allowed border-border';
     }
     if (isSelected) {
-      return 'p-3 border text-left transition-all border-neon-green bg-neon-green/10';
+      return 'p-3 border rounded text-left transition-all border-primary bg-primary/10';
     }
-    return 'p-3 border text-left transition-all border-border hover:border-muted-foreground';
+    return 'p-3 border rounded text-left transition-all border-border hover:border-muted-foreground';
   }
 
   private clearInvalidRestoreRegions(): void {
@@ -898,7 +898,7 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
       return `${base} opacity-30 cursor-not-allowed border-border grayscale`;
     }
     if (isSelected) {
-      return `${base} border-neon-green bg-neon-green/10 text-foreground`;
+      return `${base} border-primary bg-primary/10 text-foreground`;
     }
     return `${base} border-border hover:border-muted-foreground text-muted-foreground`;
   }
@@ -1107,14 +1107,14 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   getStatusBadgeClasses(status: BackupStatus): string {
     switch (status) {
       case 'completed':
-        return 'border border-status-running text-status-running';
+        return 'badge-success';
       case 'in_progress':
       case 'pending':
-        return 'border border-status-warning text-status-warning';
+        return 'badge-warning';
       case 'failed':
-        return 'border border-status-error text-status-error';
+        return 'badge-error';
       default:
-        return 'border border-status-stopped text-status-stopped';
+        return 'badge-muted';
     }
   }
 }

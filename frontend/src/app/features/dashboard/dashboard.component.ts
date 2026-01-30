@@ -15,8 +15,8 @@ import { CardComponent, StatusBadgeComponent, SpinnerComponent, EmptyStateCompon
       <!-- Header -->
       <div class="flex items-center justify-between">
         <div>
-          <h1 class="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p class="text-muted-foreground">Welcome back, {{ userEmail() }}</p>
+          <h1 class="text-lg font-bold">Dashboard</h1>
+          <p class="text-sm text-muted-foreground">Welcome back, {{ userEmail() }}</p>
         </div>
         <a
           routerLink="/clusters/new"
@@ -38,7 +38,7 @@ import { CardComponent, StatusBadgeComponent, SpinnerComponent, EmptyStateCompon
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
             </svg>
           </div>
-          <div class="text-2xl font-bold">{{ totalClusters() }}</div>
+          <div class="text-lg font-bold">{{ totalClusters() }}</div>
         </div>
 
         <div class="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
@@ -48,7 +48,7 @@ import { CardComponent, StatusBadgeComponent, SpinnerComponent, EmptyStateCompon
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
           </div>
-          <div class="text-2xl font-bold text-emerald-600">{{ runningClusters() }}</div>
+          <div class="text-lg font-bold text-emerald-600">{{ runningClusters() }}</div>
         </div>
 
         <div class="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
@@ -58,7 +58,7 @@ import { CardComponent, StatusBadgeComponent, SpinnerComponent, EmptyStateCompon
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <div class="text-2xl font-bold" [class.text-amber-600]="issuesClusters() > 0">{{ issuesClusters() }}</div>
+          <div class="text-lg font-bold" [class.text-amber-600]="issuesClusters() > 0">{{ issuesClusters() }}</div>
         </div>
       </div>
 

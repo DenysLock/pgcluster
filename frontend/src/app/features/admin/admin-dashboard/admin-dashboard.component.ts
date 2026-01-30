@@ -12,7 +12,7 @@ import { SpinnerComponent } from '../../../shared/components';
   template: `
     <div class="space-y-6">
       <div>
-        <h1 class="text-2xl font-bold tracking-tight">Admin Dashboard</h1>
+        <h1 class="text-lg font-bold">Admin Dashboard</h1>
         <p class="text-muted-foreground">Platform overview and management</p>
       </div>
 
@@ -30,7 +30,7 @@ import { SpinnerComponent } from '../../../shared/components';
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
               </svg>
             </div>
-            <div class="text-2xl font-bold">{{ stats()?.total_clusters || 0 }}</div>
+            <div class="text-lg font-bold">{{ stats()?.total_clusters || 0 }}</div>
             <p class="text-xs text-muted-foreground mt-1">{{ stats()?.running_clusters || 0 }} running</p>
           </div>
 
@@ -41,7 +41,7 @@ import { SpinnerComponent } from '../../../shared/components';
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
               </svg>
             </div>
-            <div class="text-2xl font-bold">{{ stats()?.total_users || 0 }}</div>
+            <div class="text-lg font-bold">{{ stats()?.total_users || 0 }}</div>
           </div>
 
           <div class="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
@@ -51,7 +51,7 @@ import { SpinnerComponent } from '../../../shared/components';
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <div class="text-2xl font-bold">{{ healthPercentage() }}%</div>
+            <div class="text-lg font-bold">{{ healthPercentage() }}%</div>
             <p class="text-xs text-muted-foreground mt-1">clusters running</p>
           </div>
         </div>

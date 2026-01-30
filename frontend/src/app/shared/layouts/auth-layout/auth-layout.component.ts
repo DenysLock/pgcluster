@@ -10,7 +10,7 @@ import { RouterOutlet } from '@angular/router';
     <div class="min-h-screen flex items-center justify-center bg-bg-primary p-4">
       <div class="w-full max-w-md">
         <div class="text-center mb-8">
-          <h1 class="text-2xl font-bold text-neon-green tracking-wider">PGCLUSTER</h1>
+          <h1 class="text-lg font-bold text-primary tracking-wider">PGCLUSTER</h1>
           <p class="text-muted-foreground mt-2 text-sm">Managed PostgreSQL Platform</p>
         </div>
         <ng-content />
