@@ -296,4 +296,53 @@ public class MetricsService {
                 escaped, escaped
         );
     }
+
+    /**
+     * Get cluster metrics as admin (bypasses user ownership check)
+     */
+    public ClusterMetricsResponse getClusterMetricsAsAdmin(Cluster cluster, String range) {
+        // Check cluster is running
+        if (!Cluster.STATUS_RUNNING.equals(cluster.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Metrics only available for running clusters");
+        }
+
+        // Validate and normalize range
+        if (!RANGE_TO_SECONDS.containsKey(range)) {
+            range = "1h"; // Default
+        }
+
+        String slug = cluster.getSlug();
+        String step = RANGE_TO_STEP.get(range);
+        int rangeSeconds = RANGE_TO_SECONDS.get(range);
+        int stepSeconds = STEP_TO_SECONDS.get(step);
+
+        long end = Instant.now().getEpochSecond();
+        long start = end - rangeSeconds;
+
+        log.debug("Admin fetching metrics for cluster {} ({}), range={}, step={}", slug, cluster.getId(), range, step);
+
+        // Get disk limit based on node size
+        String nodeSize = cluster.getNodeSize();
+        Long diskLimitBytes = SERVER_TYPE_DISK_GB.getOrDefault(nodeSize, 40) * 1024L * 1024L * 1024L;
+
+        return ClusterMetricsResponse.builder()
+                .clusterId(cluster.getId().toString())
+                .clusterSlug(slug)
+                .queryTime(Instant.now())
+                .timeRange(range)
+                .stepSeconds(stepSeconds)
+                .cpu(queryMetric(buildCpuQuery(slug), start, end, step))
+                .memory(queryMetric(buildMemoryQuery(slug), start, end, step))
+                .disk(queryMetric(buildDiskQuery(slug), start, end, step))
+                .connections(queryMetric(buildConnectionsQuery(slug), start, end, step))
+                .qps(queryMetric(buildQpsQuery(slug), start, end, step))
+                .replicationLag(queryMetric(buildReplicationLagQuery(slug), start, end, step))
+                .cacheHitRatio(queryMetric(buildCacheHitRatioQuery(slug), start, end, step))
+                .databaseSize(queryMetric(buildDatabaseSizeQuery(slug), start, end, step))
+                .deadlocks(queryMetric(buildDeadlocksQuery(slug), start, end, step))
+                .diskSpaceUsed(queryMetric(buildDiskSpaceUsedQuery(slug), start, end, step))
+                .diskLimitBytes(diskLimitBytes)
+                .build();
+    }
 }

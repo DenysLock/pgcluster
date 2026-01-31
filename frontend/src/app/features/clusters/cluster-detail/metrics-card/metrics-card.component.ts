@@ -2,6 +2,7 @@ import { Component, Input, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { interval, Subscription } from 'rxjs';
 import { MetricsService } from '../../../../core/services/metrics.service';
+import { AdminService } from '../../../../core/services/admin.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { ClusterMetrics, TimeRange } from '../../../../core/models';
 import { MetricChartComponent } from './metric-chart.component';
@@ -151,6 +152,7 @@ export class MetricsCardComponent implements OnInit, OnDestroy {
   @Input({ required: true }) clusterId!: string;
   @Input() isClusterRunning: boolean = false;
   @Input() nodeCount: number = 3;
+  @Input() isAdmin: boolean = false;
 
   loading = signal(false);
   error = signal<string | null>(null);
@@ -169,6 +171,7 @@ export class MetricsCardComponent implements OnInit, OnDestroy {
 
   constructor(
     private metricsService: MetricsService,
+    private adminService: AdminService,
     private notificationService: NotificationService
   ) {}
 
@@ -193,7 +196,11 @@ export class MetricsCardComponent implements OnInit, OnDestroy {
     this.loading.set(true);
     this.error.set(null);
 
-    this.metricsService.getClusterMetrics(this.clusterId, this.selectedRange()).subscribe({
+    const request$ = this.isAdmin
+      ? this.adminService.getClusterMetrics(this.clusterId, this.selectedRange())
+      : this.metricsService.getClusterMetrics(this.clusterId, this.selectedRange());
+
+    request$.subscribe({
       next: (metrics) => {
         this.metrics.set(metrics);
         this.loading.set(false);

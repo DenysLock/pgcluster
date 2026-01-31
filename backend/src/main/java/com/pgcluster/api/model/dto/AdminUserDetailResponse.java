@@ -1,20 +1,21 @@
 package com.pgcluster.api.model.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.pgcluster.api.model.entity.User;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @Data
 @Builder
 @AllArgsConstructor
-public class AdminUserResponse {
+public class AdminUserDetailResponse {
 
     private UUID id;
+
     private String email;
 
     @JsonProperty("first_name")
@@ -24,6 +25,7 @@ public class AdminUserResponse {
     private String lastName;
 
     private String role;
+
     private boolean active;
 
     @JsonProperty("created_at")
@@ -32,16 +34,8 @@ public class AdminUserResponse {
     @JsonProperty("updated_at")
     private Instant updatedAt;
 
-    public static AdminUserResponse fromEntity(User user) {
-        return AdminUserResponse.builder()
-                .id(user.getId())
-                .email(user.getEmail())
-                .firstName(user.getFirstName())
-                .lastName(user.getLastName())
-                .role(user.getRole())
-                .active(user.isActive())
-                .createdAt(user.getCreatedAt())
-                .updatedAt(user.getUpdatedAt())
-                .build();
-    }
+    private List<AdminClusterResponse> clusters;
+
+    @JsonProperty("cluster_count")
+    private int clusterCount;
 }

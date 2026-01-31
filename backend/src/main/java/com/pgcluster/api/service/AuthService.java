@@ -3,7 +3,7 @@ package com.pgcluster.api.service;
 import com.pgcluster.api.exception.ApiException;
 import com.pgcluster.api.model.dto.AuthResponse;
 import com.pgcluster.api.model.dto.LoginRequest;
-import com.pgcluster.api.model.dto.RegisterRequest;
+import com.pgcluster.api.model.entity.AuditLog;
 import com.pgcluster.api.model.entity.User;
 import com.pgcluster.api.repository.UserRepository;
 import com.pgcluster.api.security.JwtTokenProvider;
@@ -22,44 +22,33 @@ public class AuthService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
-
-    @Transactional
-    public AuthResponse register(RegisterRequest request) {
-        // Check if email already exists
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new ApiException("Email already registered", HttpStatus.CONFLICT);
-        }
-
-        // Create new user
-        User user = User.builder()
-                .email(request.getEmail().toLowerCase())
-                .passwordHash(passwordEncoder.encode(request.getPassword()))
-                .firstName(request.getFirstName())
-                .lastName(request.getLastName())
-                .role("user")
-                .active(true)
-                .build();
-
-        user = userRepository.save(user);
-        log.info("User registered: {}", user.getEmail());
-
-        return createAuthResponse(user);
-    }
+    private final AuditLogService auditLogService;
 
     public AuthResponse login(LoginRequest request) {
+        String email = request.getEmail().toLowerCase();
+
         // Find user by email
-        User user = userRepository.findByEmail(request.getEmail().toLowerCase())
-                .orElseThrow(() -> new ApiException("Invalid email or password", HttpStatus.UNAUTHORIZED));
+        User user = userRepository.findByEmail(email).orElse(null);
+
+        if (user == null) {
+            auditLogService.logAuth(AuditLog.AUTH_LOGIN_FAILURE, email, false, "User not found");
+            throw new ApiException("Invalid email or password", HttpStatus.UNAUTHORIZED);
+        }
 
         // Verify password
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+            auditLogService.logAuth(AuditLog.AUTH_LOGIN_FAILURE, email, false, "Invalid password");
             throw new ApiException("Invalid email or password", HttpStatus.UNAUTHORIZED);
         }
 
         // Check if user is active
         if (!user.isActive()) {
+            auditLogService.logAuth(AuditLog.AUTH_LOGIN_FAILURE, email, false, "Account disabled");
             throw new ApiException("Account is disabled", HttpStatus.FORBIDDEN);
         }
+
+        // Log successful login
+        auditLogService.log(AuditLog.AUTH_LOGIN_SUCCESS, user, "auth", null, null);
 
         log.info("User logged in: {}", user.getEmail());
         return createAuthResponse(user);

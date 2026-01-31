@@ -1,7 +1,7 @@
 import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
-import { Router, RouterLink } from '@angular/router';
+import { Router } from '@angular/router';
 import { AuthService } from '../../../core/services/auth.service';
 import { AuthLayoutComponent } from '../../../shared/layouts/auth-layout/auth-layout.component';
 import { SpinnerComponent } from '../../../shared/components';
@@ -9,7 +9,7 @@ import { SpinnerComponent } from '../../../shared/components';
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterLink, AuthLayoutComponent, SpinnerComponent],
+  imports: [CommonModule, ReactiveFormsModule, AuthLayoutComponent, SpinnerComponent],
   template: `
     <app-auth-layout>
       <div class="card">
@@ -69,8 +69,7 @@ import { SpinnerComponent } from '../../../shared/components';
 
         <div class="mt-6 pt-4 border-t border-border">
           <p class="text-sm text-center text-muted-foreground">
-            Don't have an account?
-            <a routerLink="/register" class="text-primary hover:underline font-medium ml-1">Sign up</a>
+            Contact your administrator to get an account
           </p>
         </div>
       </div>

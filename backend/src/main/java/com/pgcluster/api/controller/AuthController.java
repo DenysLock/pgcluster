@@ -2,7 +2,6 @@ package com.pgcluster.api.controller;
 
 import com.pgcluster.api.model.dto.AuthResponse;
 import com.pgcluster.api.model.dto.LoginRequest;
-import com.pgcluster.api.model.dto.RegisterRequest;
 import com.pgcluster.api.model.entity.User;
 import com.pgcluster.api.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -23,13 +22,6 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
-
-    @PostMapping("/register")
-    @Operation(summary = "Register a new user")
-    public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest request) {
-        AuthResponse response = authService.register(request);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
-    }
 
     @PostMapping("/login")
     @Operation(summary = "Login with email and password")

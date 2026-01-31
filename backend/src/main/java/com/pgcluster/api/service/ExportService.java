@@ -1,5 +1,6 @@
 package com.pgcluster.api.service;
 
+import com.pgcluster.api.model.entity.AuditLog;
 import com.pgcluster.api.model.entity.Cluster;
 import com.pgcluster.api.model.entity.Export;
 import com.pgcluster.api.model.entity.User;
@@ -38,6 +39,7 @@ public class ExportService {
     private final SshService sshService;
     private final PatroniService patroniService;
     private final ApplicationEventPublisher eventPublisher;
+    private final AuditLogService auditLogService;
 
     // Self-injection for @Async to work
     @Autowired
@@ -52,6 +54,12 @@ public class ExportService {
 
     @Value("${timeouts.export:3600000}")
     private int exportTimeoutMs;
+
+    @Value("${export.max-retries:2}")
+    private int maxRetries;
+
+    @Value("${export.retry-delay-seconds:10}")
+    private int retryDelaySeconds;
 
     /**
      * Create a database export (pg_dump)
@@ -88,6 +96,17 @@ public class ExportService {
         export = exportRepository.save(export);
         log.info("Created export {} for cluster {}", export.getId(), cluster.getSlug());
 
+        // Capture IP before async call (will be lost in async context)
+        String clientIp = auditLogService.getCurrentRequestIp();
+
+        // Audit log with pre-captured IP
+        auditLogService.logAsync(AuditLog.EXPORT_INITIATED, user, "export", export.getId(),
+                java.util.Map.of(
+                        "cluster_id", cluster.getId().toString(),
+                        "cluster_name", cluster.getName(),
+                        "cluster_slug", cluster.getSlug()
+                ), clientIp);
+
         // Publish event to trigger async export after transaction commits
         eventPublisher.publishEvent(new ExportCreatedEvent(this, export.getId()));
 
@@ -95,16 +114,56 @@ public class ExportService {
     }
 
     /**
-     * Execute export asynchronously
+     * Execute export asynchronously with auto-retry on transient failures
      */
     @Async
     public void executeExportAsync(UUID exportId) {
-        try {
-            executeExport(exportId);
-        } catch (Exception e) {
-            log.error("Failed to execute export {}: {}", exportId, e.getMessage(), e);
-            markExportFailed(exportId, e.getMessage());
+        Exception lastException = null;
+
+        for (int attempt = 1; attempt <= maxRetries + 1; attempt++) {
+            try {
+                executeExport(exportId);
+                return; // Success - exit retry loop
+            } catch (Exception e) {
+                lastException = e;
+
+                if (attempt <= maxRetries) {
+                    log.warn("Export {} failed on attempt {}/{}, retrying in {} seconds: {}",
+                            exportId, attempt, maxRetries + 1, retryDelaySeconds, e.getMessage());
+
+                    // Reset export status to pending for retry
+                    resetExportForRetry(exportId);
+
+                    try {
+                        Thread.sleep(retryDelaySeconds * 1000L);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        log.error("Export {} retry interrupted", exportId);
+                        break;
+                    }
+                } else {
+                    log.error("Export {} failed after {} attempts: {}",
+                            exportId, attempt, e.getMessage(), e);
+                }
+            }
         }
+
+        // All retries exhausted
+        if (lastException != null) {
+            markExportFailed(exportId, lastException.getMessage());
+        }
+    }
+
+    /**
+     * Reset export status for retry attempt
+     */
+    private void resetExportForRetry(UUID exportId) {
+        exportRepository.findById(exportId).ifPresent(export -> {
+            export.setStatus(Export.STATUS_PENDING);
+            export.setErrorMessage(null);
+            export.setStartedAt(null);
+            exportRepository.save(export);
+        });
     }
 
     /**
@@ -300,6 +359,9 @@ public class ExportService {
      */
     @Transactional
     public void deleteExport(UUID clusterId, UUID exportId, User user) {
+        // Capture IP before async audit log
+        String clientIp = auditLogService.getCurrentRequestIp();
+
         Export export = getExport(clusterId, exportId, user);
 
         // Don't allow deleting in-progress exports
@@ -317,7 +379,40 @@ public class ExportService {
             }
         }
 
+        // Audit log with pre-captured IP
+        Cluster cluster = export.getCluster();
+        auditLogService.logAsync(AuditLog.EXPORT_DELETED, user, "export", exportId,
+                java.util.Map.of(
+                        "cluster_id", cluster.getId().toString(),
+                        "cluster_name", cluster.getName(),
+                        "cluster_slug", cluster.getSlug()
+                ), clientIp);
+
         exportRepository.delete(export);
         log.info("Deleted export {} for cluster {}", exportId, clusterId);
+    }
+
+    /**
+     * Delete an export as admin (bypasses user ownership check)
+     */
+    @Transactional
+    public void deleteExportAsAdmin(Cluster cluster, Export export) {
+        // Don't allow deleting in-progress exports
+        if (Export.STATUS_IN_PROGRESS.equals(export.getStatus())) {
+            throw new IllegalStateException("Cannot delete an export that is in progress");
+        }
+
+        // Delete from S3 if path exists
+        if (export.getS3Path() != null && s3StorageService.isConfigured()) {
+            try {
+                s3StorageService.deleteFile(export.getS3Path());
+                log.info("Deleted export file from S3: {}", export.getS3Path());
+            } catch (Exception e) {
+                log.warn("Failed to delete export file from S3: {}. Continuing with database deletion.", e.getMessage());
+            }
+        }
+
+        exportRepository.delete(export);
+        log.info("Admin deleted export {} for cluster {}", export.getId(), cluster.getSlug());
     }
 }

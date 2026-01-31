@@ -58,6 +58,29 @@ import { ClusterService } from '../../../core/services/cluster.service';
 
         @if (menuOpen) {
           <div class="absolute right-0 top-full mt-1 w-48 bg-white border border-border rounded shadow-lg z-50">
+            @if (isAdmin()) {
+              <a
+                routerLink="/admin"
+                (click)="menuOpen = false"
+                class="block px-4 py-3 text-sm text-foreground hover:bg-bg-tertiary transition-colors border-b border-border"
+              >
+                Admin Dashboard
+              </a>
+              <a
+                routerLink="/admin/users"
+                (click)="menuOpen = false"
+                class="block px-4 py-3 text-sm text-foreground hover:bg-bg-tertiary transition-colors"
+              >
+                Manage Users
+              </a>
+              <a
+                routerLink="/admin/audit-logs"
+                (click)="menuOpen = false"
+                class="block px-4 py-3 text-sm text-foreground hover:bg-bg-tertiary transition-colors border-b border-border"
+              >
+                Audit Logs
+              </a>
+            }
             <a
               routerLink="/settings"
               (click)="menuOpen = false"
@@ -90,6 +113,7 @@ export class HeaderComponent {
   menuOpen = false;
 
   userEmail = computed(() => this.authService.user()?.email || 'User');
+  isAdmin = computed(() => this.authService.user()?.role === 'admin');
 
   clusters = this.clusterService.clusters;
 

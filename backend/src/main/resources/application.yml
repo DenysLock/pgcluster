@@ -47,6 +47,11 @@ security:
   field-encryption-key: ${FIELD_ENCRYPTION_KEY}
   internal-api-key: ${INTERNAL_API_KEY}
 
+# Admin Bootstrap Configuration
+admin:
+  email: ${ADMIN_EMAIL:}
+  password: ${ADMIN_PASSWORD:}
+
 # Hetzner Cloud Configuration
 hetzner:
   api-token: ${HETZNER_API_TOKEN:}

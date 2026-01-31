@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Router } from '@angular/router';
 import { Observable, tap, catchError, throwError } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { User, AuthResponse, LoginRequest, RegisterRequest } from '../models';
+import { User, AuthResponse, LoginRequest } from '../models';
 
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'auth_user';
@@ -80,16 +80,6 @@ export class AuthService {
 
   login(credentials: LoginRequest): Observable<AuthResponse> {
     return this.http.post<AuthResponse>(`${environment.apiUrl}/api/v1/auth/login`, credentials).pipe(
-      tap(response => this.saveAuth(response)),
-      catchError(error => {
-        this.clearAuth();
-        return throwError(() => error);
-      })
-    );
-  }
-
-  register(credentials: RegisterRequest): Observable<AuthResponse> {
-    return this.http.post<AuthResponse>(`${environment.apiUrl}/api/v1/auth/register`, credentials).pipe(
       tap(response => this.saveAuth(response)),
       catchError(error => {
         this.clearAuth();

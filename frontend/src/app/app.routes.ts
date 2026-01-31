@@ -8,11 +8,6 @@ export const routes: Routes = [
     canActivate: [guestGuard],
     loadComponent: () => import('./features/auth/login/login.component').then(m => m.LoginComponent)
   },
-  {
-    path: 'register',
-    canActivate: [guestGuard],
-    loadComponent: () => import('./features/auth/register/register.component').then(m => m.RegisterComponent)
-  },
 
   // Protected routes (authenticated users)
   {
@@ -57,6 +52,14 @@ export const routes: Routes = [
       {
         path: 'users',
         loadComponent: () => import('./features/admin/users/user-list.component').then(m => m.UserListComponent)
+      },
+      {
+        path: 'users/:id',
+        loadComponent: () => import('./features/admin/users/user-detail.component').then(m => m.UserDetailComponent)
+      },
+      {
+        path: 'audit-logs',
+        loadComponent: () => import('./features/admin/audit-logs/audit-log-list.component').then(m => m.AuditLogListComponent)
       }
     ]
   },

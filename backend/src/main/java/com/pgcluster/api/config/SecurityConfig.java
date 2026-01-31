@@ -38,7 +38,8 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 // Public endpoints
                 .requestMatchers("/health", "/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
-                .requestMatchers("/api/v1/auth/**").permitAll()
+                // Auth endpoints (users created via admin panel)
+                .requestMatchers("/api/v1/auth/login", "/api/v1/auth/me", "/api/v1/auth/logout").permitAll()
                 .requestMatchers("/actuator/**").permitAll()
                 // Internal endpoints (Prometheus service discovery) - protected by API key filter
                 .requestMatchers("/internal/**").permitAll()  // Auth handled by InternalApiKeyFilter

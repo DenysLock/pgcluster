@@ -31,6 +31,7 @@ export interface AdminCluster {
   node_count: number;
   node_size: string;
   region: string;
+  nodes?: VpsNodeInfo[];
   created_at: string;
   updated_at: string;
 }
@@ -75,4 +76,5 @@ export interface VpsNodeInfo {
   role: string;
   server_type: string;
   location: string;
+  reachable?: boolean;
 }

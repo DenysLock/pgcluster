@@ -2,6 +2,7 @@ import { Component, Input, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { interval, Subscription } from 'rxjs';
 import { BackupService } from '../../../../core/services/backup.service';
+import { AdminService } from '../../../../core/services/admin.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { Export, ExportStatus } from '../../../../core/models';
 import { POLLING_INTERVALS } from '../../../../core/constants';
@@ -18,24 +19,26 @@ import { ConfirmDialogComponent } from '../../../../shared/components';
     <div class="card">
       <div class="card-header">Exports</div>
       <div class="space-y-6">
-        <!-- Action Button -->
-        <div class="flex items-center justify-end">
-          <button
-            (click)="startExport()"
-            [disabled]="!isClusterRunning || exporting()"
-            class="btn-primary h-9 px-4"
-          >
-            @if (exporting()) {
-              <span class="spinner w-4 h-4 mr-2"></span>
-              Creating...
-            } @else {
-              <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-              Export Database
-            }
-          </button>
-        </div>
+        <!-- Action Button (hidden for admin) -->
+        @if (!isAdmin) {
+          <div class="flex items-center justify-end">
+            <button
+              (click)="startExport()"
+              [disabled]="!isClusterRunning || exporting()"
+              class="btn-primary h-9 px-4"
+            >
+              @if (exporting()) {
+                <span class="spinner w-4 h-4 mr-2"></span>
+                Creating...
+              } @else {
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Export Database
+              }
+            </button>
+          </div>
+        }
 
         <!-- Loading state -->
         @if (loading()) {
@@ -187,6 +190,7 @@ import { ConfirmDialogComponent } from '../../../../shared/components';
 export class ExportsCardComponent implements OnInit, OnDestroy {
   @Input({ required: true }) clusterId!: string;
   @Input() isClusterRunning: boolean = false;
+  @Input() isAdmin: boolean = false;
 
   loading = signal(true);
   exporting = signal(false);
@@ -200,6 +204,7 @@ export class ExportsCardComponent implements OnInit, OnDestroy {
 
   constructor(
     private backupService: BackupService,
+    private adminService: AdminService,
     private notificationService: NotificationService
   ) {}
 
@@ -213,7 +218,11 @@ export class ExportsCardComponent implements OnInit, OnDestroy {
   }
 
   loadExports(): void {
-    this.backupService.getExports(this.clusterId).subscribe({
+    const request$ = this.isAdmin
+      ? this.adminService.getClusterExports(this.clusterId)
+      : this.backupService.getExports(this.clusterId);
+
+    request$.subscribe({
       next: (exports) => {
         this.exports.set(exports);
         this.loading.set(false);
@@ -281,7 +290,11 @@ export class ExportsCardComponent implements OnInit, OnDestroy {
     this.showDeleteDialog.set(false);
     this.deleting.set(exportId);
 
-    this.backupService.deleteExport(this.clusterId, exportId).subscribe({
+    const request$ = this.isAdmin
+      ? this.adminService.deleteClusterExport(this.clusterId, exportId)
+      : this.backupService.deleteExport(this.clusterId, exportId);
+
+    request$.subscribe({
       next: () => {
         this.exports.update(list => list.filter(e => e.id !== exportId));
         this.deleting.set(null);

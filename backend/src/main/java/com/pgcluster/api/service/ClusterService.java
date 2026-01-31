@@ -10,6 +10,7 @@ import com.pgcluster.api.model.dto.ClusterResponse;
 import com.pgcluster.api.model.dto.LocationDto;
 import com.pgcluster.api.model.dto.ServerTypeDto;
 import com.pgcluster.api.model.dto.ServerTypesResponse;
+import com.pgcluster.api.model.entity.AuditLog;
 import com.pgcluster.api.model.entity.Cluster;
 import com.pgcluster.api.model.entity.User;
 import com.pgcluster.api.model.entity.VpsNode;
@@ -47,6 +48,7 @@ public class ClusterService {
     private final SshService sshService;
     private final PatroniService patroniService;
     private final ApplicationEventPublisher eventPublisher;
+    private final AuditLogService auditLogService;
 
     public ClusterListResponse listClusters(User user) {
         List<Cluster> clusters = clusterRepository.findByUserOrderByCreatedAtDesc(user);
@@ -171,6 +173,9 @@ public class ClusterService {
      * Get cluster credentials, access is logged.
      */
     public ClusterCredentialsResponse getClusterCredentials(UUID id, User user) {
+        // Capture IP before async audit log
+        String clientIp = auditLogService.getCurrentRequestIp();
+
         Cluster cluster = clusterRepository.findByIdAndUser(id, user)
                 .orElseThrow(() -> new ApiException("Cluster not found", HttpStatus.NOT_FOUND));
 
@@ -179,6 +184,13 @@ public class ClusterService {
         }
 
         log.info("Credentials accessed for cluster {} by user {}", cluster.getSlug(), user.getEmail());
+
+        // Audit log with pre-captured IP
+        auditLogService.logAsync(AuditLog.CREDENTIALS_ACCESSED, user, "cluster", cluster.getId(),
+                java.util.Map.of(
+                        "cluster_name", cluster.getName(),
+                        "cluster_slug", cluster.getSlug()
+                ), clientIp);
 
         int pooledPort = 6432;
 
@@ -209,6 +221,9 @@ public class ClusterService {
      * Remaining provisioning (SSH, containers, DNS) is async.
      */
     public ClusterResponse createCluster(ClusterCreateRequest request, User user) {
+        // Capture IP before any async operations (will be lost in async context)
+        String clientIp = auditLogService.getCurrentRequestIp();
+
         // Validate that all selected regions are available
         validateNodeRegions(request.getNodeRegions(), request.getNodeSize());
 
@@ -255,6 +270,16 @@ public class ClusterService {
 
             // ASYNC: Continue provisioning (SSH, containers, DNS)
             provisioningService.continueProvisioningFromServers(cluster, nodes);
+
+            // Audit log with pre-captured IP
+            auditLogService.logAsync(AuditLog.CLUSTER_CREATED, user, "cluster", cluster.getId(),
+                    java.util.Map.of(
+                            "cluster_name", cluster.getName(),
+                            "cluster_slug", cluster.getSlug(),
+                            "node_count", cluster.getNodeCount(),
+                            "node_size", cluster.getNodeSize(),
+                            "postgres_version", cluster.getPostgresVersion()
+                    ), clientIp);
 
             return ClusterResponse.fromEntity(cluster);
 
@@ -327,6 +352,13 @@ public class ClusterService {
         clusterRepository.save(cluster);
 
         log.info("Cluster marked for deletion: {} ({})", cluster.getName(), cluster.getSlug());
+
+        // Audit log
+        auditLogService.log(AuditLog.CLUSTER_DELETED, user, "cluster", cluster.getId(),
+                java.util.Map.of(
+                        "cluster_name", cluster.getName(),
+                        "cluster_slug", cluster.getSlug()
+                ));
 
         // Publish event to trigger async deletion after transaction commits
         eventPublisher.publishEvent(new ClusterDeleteRequestedEvent(this, cluster));

@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { interval, Subscription } from 'rxjs';
 import { BackupService } from '../../../../core/services/backup.service';
 import { ClusterService } from '../../../../core/services/cluster.service';
+import { AdminService } from '../../../../core/services/admin.service';
 import { NotificationService } from '../../../../core/services/notification.service';
 import { Backup, BackupDeletionInfo, BackupStatus, BackupMetrics, BackupStep, Location, ClusterNode, ServerType, ServerTypesResponse } from '../../../../core/models';
 import { POLLING_INTERVALS } from '../../../../core/constants';
@@ -50,33 +51,35 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
           }
         }
 
-        <!-- Action Button with Type Selector -->
-        <div class="flex items-center justify-end gap-2">
-          <select
-            [(ngModel)]="selectedBackupType"
-            [disabled]="!isClusterRunning || creating()"
-            class="select h-9 px-3 py-1 text-sm"
-          >
-            <option value="incr">Incremental</option>
-            <option value="diff">Differential</option>
-            <option value="full">Full</option>
-          </select>
-          <button
-            (click)="createBackup()"
-            [disabled]="!isClusterRunning || creating()"
-            class="btn-primary h-9 px-6 whitespace-nowrap"
-          >
-            @if (creating()) {
-              <span class="spinner w-4 h-4 mr-2"></span>
-              Creating...
-            } @else {
-              <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
-              Create Backup
-            }
-          </button>
-        </div>
+        <!-- Action Button with Type Selector (hidden for admin) -->
+        @if (!isAdmin) {
+          <div class="flex items-center justify-end gap-2">
+            <select
+              [(ngModel)]="selectedBackupType"
+              [disabled]="!isClusterRunning || creating()"
+              class="select h-9 px-3 py-1 text-sm"
+            >
+              <option value="incr">Incremental</option>
+              <option value="diff">Differential</option>
+              <option value="full">Full</option>
+            </select>
+            <button
+              (click)="createBackup()"
+              [disabled]="!isClusterRunning || creating()"
+              class="btn-primary h-9 px-6 whitespace-nowrap"
+            >
+              @if (creating()) {
+                <span class="spinner w-4 h-4 mr-2"></span>
+                Creating...
+              } @else {
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                Create Backup
+              }
+            </button>
+          </div>
+        }
 
         <!-- Loading state -->
         @if (loading()) {
@@ -170,7 +173,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
 
                   <!-- Actions -->
                   <div class="flex items-center gap-2 ml-4">
-                    @if (backup.status === 'completed') {
+                    @if (backup.status === 'completed' && !isAdmin) {
                       <button
                         (click)="openRestoreDialog(backup)"
                         class="btn-secondary h-8 px-3 text-sm"
@@ -518,6 +521,7 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   @Input() clusterNodes: ClusterNode[] = [];
   @Input() sourceNodeSize: string = 'cx23';
   @Input() sourcePostgresVersion: string = '16';
+  @Input() isAdmin: boolean = false;
 
   loading = signal(true);
   creating = signal(false);
@@ -582,6 +586,7 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   constructor(
     private backupService: BackupService,
     private clusterService: ClusterService,
+    private adminService: AdminService,
     private notificationService: NotificationService,
     private router: Router
   ) {}
@@ -604,7 +609,9 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.loadBackups();
-    this.loadMetrics();
+    if (!this.isAdmin) {
+      this.loadMetrics();  // Skip metrics for admin (no admin endpoint)
+    }
     this.startPolling();
   }
 
@@ -613,7 +620,11 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   }
 
   private loadBackups(): void {
-    this.backupService.getBackups(this.clusterId).subscribe({
+    const request$ = this.isAdmin
+      ? this.adminService.getClusterBackups(this.clusterId)
+      : this.backupService.getBackups(this.clusterId);
+
+    request$.subscribe({
       next: (response) => {
         // API excludes deleted backups by default
         this.backups.set(response.backups);
@@ -704,7 +715,11 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     this.deleting.set(backupId);
 
     // Always pass confirm=true since user confirmed via dialog
-    this.backupService.deleteBackup(this.clusterId, backupId, true).subscribe({
+    const request$ = this.isAdmin
+      ? this.adminService.deleteClusterBackup(this.clusterId, backupId, true)
+      : this.backupService.deleteBackup(this.clusterId, backupId, true);
+
+    request$.subscribe({
       next: () => {
         // Remove the primary backup and all dependents from the list
         const idsToRemove = new Set([backupId]);

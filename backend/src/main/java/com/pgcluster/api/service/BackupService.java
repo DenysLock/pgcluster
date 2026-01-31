@@ -5,6 +5,7 @@ import com.pgcluster.api.exception.ApiException;
 import com.pgcluster.api.model.dto.PgBackRestBackupInfo;
 import com.pgcluster.api.model.dto.RestoreRequest;
 import com.pgcluster.api.util.FormatUtils;
+import com.pgcluster.api.model.entity.AuditLog;
 import com.pgcluster.api.model.entity.Backup;
 import com.pgcluster.api.model.entity.Cluster;
 import com.pgcluster.api.model.entity.RestoreJob;
@@ -59,6 +60,7 @@ public class BackupService {
     private final PatroniService patroniService;
     private final HetznerClient hetznerClient;
     private final ApplicationEventPublisher eventPublisher;
+    private final AuditLogService auditLogService;
 
     // Self-injection to enable @Async to work (Spring proxy requirement)
     @Autowired
@@ -127,6 +129,18 @@ public class BackupService {
 
         backup = backupRepository.save(backup);
         log.info("Created manual {} backup {} for cluster {}", normalizedType, backup.getId(), cluster.getSlug());
+
+        // Capture IP before async call (will be lost in async context)
+        String clientIp = auditLogService.getCurrentRequestIp();
+
+        // Audit log with pre-captured IP
+        auditLogService.logAsync(AuditLog.BACKUP_INITIATED, user, "backup", backup.getId(),
+                Map.of(
+                        "cluster_id", cluster.getId().toString(),
+                        "cluster_name", cluster.getName(),
+                        "cluster_slug", cluster.getSlug(),
+                        "backup_type", normalizedType
+                ), clientIp);
 
         // Publish event to trigger async backup after transaction commits
         eventPublisher.publishEvent(new BackupCreatedEvent(this, backup.getId()));
@@ -418,6 +432,9 @@ public class BackupService {
      */
     @Transactional
     public void deleteBackup(UUID clusterId, UUID backupId, User user, boolean confirmed) {
+        // Capture IP before async audit log
+        String clientIp = auditLogService.getCurrentRequestIp();
+
         Cluster cluster = clusterRepository.findByIdAndUser(clusterId, user)
                 .orElseThrow(() -> new IllegalArgumentException("Cluster not found"));
 
@@ -490,6 +507,15 @@ public class BackupService {
             log.info("Dependent backup {} marked as deleted", dependent.getId());
         }
 
+        // Audit log with pre-captured IP
+        auditLogService.logAsync(AuditLog.BACKUP_DELETED, user, "backup", backupId,
+                Map.of(
+                        "cluster_id", cluster.getId().toString(),
+                        "cluster_name", cluster.getName(),
+                        "cluster_slug", cluster.getSlug(),
+                        "dependent_count", dependentBackups.size()
+                ), clientIp);
+
         log.info("Backup deletion completed: {} primary + {} dependents deleted",
                 1, dependentBackups.size());
     }
@@ -529,6 +555,9 @@ public class BackupService {
      */
     @Transactional
     public RestoreJob restoreBackup(UUID clusterId, UUID backupId, RestoreRequest request, User user) {
+        // Capture IP before async audit log
+        String clientIp = auditLogService.getCurrentRequestIp();
+
         Cluster sourceCluster = clusterRepository.findByIdAndUser(clusterId, user)
                 .orElseThrow(() -> new IllegalArgumentException("Cluster not found"));
 
@@ -627,6 +656,38 @@ public class BackupService {
         restoreJob = restoreJobRepository.save(restoreJob);
         log.info("Created restore job {} for backup {} (type: {}, newCluster: {})",
                 restoreJob.getId(), backupId, restoreType, createNewCluster);
+
+        // Audit log: BACKUP_RESTORE_INITIATED with source and target info
+        Map<String, Object> restoreDetails = new java.util.HashMap<>();
+        restoreDetails.put("cluster_id", sourceCluster.getId().toString());
+        restoreDetails.put("cluster_name", sourceCluster.getName());
+        restoreDetails.put("cluster_slug", sourceCluster.getSlug());
+        restoreDetails.put("restore_job_id", restoreJob.getId().toString());
+        restoreDetails.put("restore_type", restoreType);
+        if (targetCluster != null) {
+            restoreDetails.put("target_cluster_id", targetCluster.getId().toString());
+            restoreDetails.put("target_cluster_name", targetCluster.getName());
+            restoreDetails.put("target_cluster_slug", targetCluster.getSlug());
+        } else {
+            restoreDetails.put("target_cluster_name", "in-place");
+        }
+        auditLogService.logAsync(AuditLog.BACKUP_RESTORE_INITIATED, user, "backup", backupId,
+                restoreDetails, clientIp);
+
+        // Audit log: CLUSTER_CREATED for the restored cluster (if new cluster was created)
+        if (targetCluster != null) {
+            auditLogService.logAsync(AuditLog.CLUSTER_CREATED, user, "cluster", targetCluster.getId(),
+                    Map.of(
+                            "cluster_name", targetCluster.getName(),
+                            "cluster_slug", targetCluster.getSlug(),
+                            "node_count", targetCluster.getNodeCount(),
+                            "node_size", targetCluster.getNodeSize(),
+                            "postgres_version", targetCluster.getPostgresVersion(),
+                            "restored_from_cluster_id", sourceCluster.getId().toString(),
+                            "restored_from_cluster_slug", sourceCluster.getSlug(),
+                            "restored_from_backup_id", backupId.toString()
+                    ), clientIp);
+        }
 
         // Publish event to trigger async restore after transaction commits
         eventPublisher.publishEvent(new RestoreRequestedEvent(this, restoreJob.getId(), createNewCluster));
@@ -1075,6 +1136,69 @@ public class BackupService {
                             ". Please select different regions.",
                     HttpStatus.BAD_REQUEST
             );
+        }
+    }
+
+    /**
+     * Delete backup as admin (bypasses user ownership check)
+     */
+    @Transactional
+    public void deleteBackupAsAdmin(Cluster cluster, Backup backup, boolean confirmed) {
+        if (Backup.STATUS_DELETED.equals(backup.getStatus())) {
+            throw new IllegalStateException("This backup is already deleted");
+        }
+
+        // Check cluster is running (need SSH access)
+        if (!Cluster.STATUS_RUNNING.equals(cluster.getStatus())) {
+            throw new IllegalStateException("Cluster must be running to delete backups. Current status: " + cluster.getStatus());
+        }
+
+        // Check if this is the only full backup
+        if (Backup.BACKUP_TYPE_FULL.equals(backup.getBackupType())) {
+            List<Backup> allFullBackups = backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED)
+                    .stream()
+                    .filter(b -> Backup.BACKUP_TYPE_FULL.equals(b.getBackupType()))
+                    .toList();
+
+            if (allFullBackups.size() <= 1) {
+                throw new IllegalStateException(
+                        "Cannot delete the only full backup. pgBackRest requires at least one full backup."
+                );
+            }
+        }
+
+        // Find dependent backups
+        List<Backup> dependentBackups = findDependentBackups(cluster, backup);
+
+        if (!dependentBackups.isEmpty() && !confirmed) {
+            throw new IllegalStateException(
+                    "This backup has " + dependentBackups.size() + " dependent backup(s). Use confirm=true to delete all."
+            );
+        }
+
+        // Find leader node for SSH
+        VpsNode leaderNode = patroniService.findLeaderNode(cluster);
+        if (leaderNode == null) {
+            throw new RuntimeException("No leader node found for cluster " + cluster.getSlug());
+        }
+
+        // Delete from pgBackRest
+        String pgbackrestLabel = backup.getPgbackrestLabel();
+        if (pgbackrestLabel != null && !pgbackrestLabel.isBlank()) {
+            try {
+                pgBackRestService.expireSpecificBackup(cluster, leaderNode, pgbackrestLabel);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to delete backup from storage: " + e.getMessage(), e);
+            }
+        }
+
+        // Mark as deleted in DB
+        backup.setStatus(Backup.STATUS_DELETED);
+        backupRepository.save(backup);
+
+        for (Backup dependent : dependentBackups) {
+            dependent.setStatus(Backup.STATUS_DELETED);
+            backupRepository.save(dependent);
         }
     }
 }

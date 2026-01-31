@@ -40,6 +40,11 @@ public interface ClusterRepository extends JpaRepository<Cluster, UUID> {
     @Query("SELECT c FROM Cluster c LEFT JOIN FETCH c.user WHERE c.status != 'deleted' ORDER BY c.createdAt DESC")
     List<Cluster> findAllWithUser();
 
+    @Query("SELECT c FROM Cluster c LEFT JOIN FETCH c.user ORDER BY c.createdAt DESC")
+    List<Cluster> findAllWithUserIncludingDeleted();
+
     @Query("SELECT c FROM Cluster c LEFT JOIN FETCH c.user LEFT JOIN FETCH c.nodes WHERE c.id = :id")
     Optional<Cluster> findByIdWithUserAndNodes(@Param("id") UUID id);
+
+    List<Cluster> findByUserAndStatusNotOrderByCreatedAtDesc(User user, String status);
 }

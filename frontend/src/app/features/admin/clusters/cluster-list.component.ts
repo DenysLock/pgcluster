@@ -50,7 +50,7 @@ import { SpinnerComponent, EmptyStateComponent } from '../../../shared/component
                     <div class="text-xs text-muted-foreground font-mono">{{ cluster.slug }}.db.pgcluster.com</div>
                   </td>
                   <td class="p-4">
-                    <span class="text-sm text-muted-foreground">{{ cluster.region }}</span>
+                    <span class="text-sm text-muted-foreground uppercase">{{ getAllRegions(cluster) }}</span>
                   </td>
                   <td class="p-4">
                     <span [class]="getStatusClass(cluster.status)" class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium">
@@ -94,19 +94,28 @@ export class AdminClusterListComponent implements OnInit {
   getStatusClass(status: string): string {
     switch (status) {
       case 'running':
-        return 'bg-green-50 text-green-700 border border-green-500';
+        return 'bg-green-100 text-green-700 border border-green-200';
       case 'creating':
       case 'provisioning':
       case 'forming':
-        return 'bg-amber-50 text-amber-700 border border-amber-500';
+        return 'bg-amber-100 text-amber-700 border border-amber-200';
       case 'error':
       case 'failed':
-        return 'bg-red-50 text-red-700 border border-red-500';
+        return 'bg-red-100 text-red-700 border border-red-200';
       case 'degraded':
-        return 'bg-orange-50 text-orange-700 border border-orange-500';
+        return 'bg-orange-100 text-orange-700 border border-orange-200';
+      case 'deleted':
+        return 'bg-gray-100 text-gray-500 border border-gray-200';
       default:
-        return 'bg-slate-100 text-slate-600 border border-slate-300';
+        return 'bg-gray-100 text-gray-700 border border-gray-200';
     }
+  }
+
+  getAllRegions(cluster: AdminCluster): string {
+    if (cluster.nodes && cluster.nodes.length > 0) {
+      return cluster.nodes.map(n => n.location || cluster.region).join(', ');
+    }
+    return cluster.region || '';
   }
 
   formatPlan(plan: string): string {
