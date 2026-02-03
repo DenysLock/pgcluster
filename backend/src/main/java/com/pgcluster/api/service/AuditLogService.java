@@ -40,13 +40,13 @@ public class AuditLogService {
     }
 
     /**
-     * Log an audit event asynchronously with pre-captured IP address.
+     * Log an audit event asynchronously with pre-captured IP and user-agent.
      * Use this when calling from async context where HTTP request context is lost.
      */
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void logAsync(String action, User user, String resourceType, UUID resourceId, Map<String, Object> details, String ipAddress) {
-        doLogWithIp(action, user, resourceType, resourceId, details, ipAddress);
+    public void logAsync(String action, User user, String resourceType, UUID resourceId, Map<String, Object> details, String ipAddress, String userAgent) {
+        doLogWithIp(action, user, resourceType, resourceId, details, ipAddress, userAgent);
     }
 
     /**
@@ -57,6 +57,18 @@ public class AuditLogService {
         ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
         if (attrs != null) {
             return getClientIp(attrs.getRequest());
+        }
+        return null;
+    }
+
+    /**
+     * Get the user-agent from the current HTTP request context.
+     * Call this BEFORE async operations to capture user-agent while still in HTTP context.
+     */
+    public String getCurrentRequestUserAgent() {
+        ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attrs != null) {
+            return attrs.getRequest().getHeader("User-Agent");
         }
         return null;
     }
@@ -88,9 +100,9 @@ public class AuditLogService {
         }
     }
 
-    private void doLogWithIp(String action, User user, String resourceType, UUID resourceId, Map<String, Object> details, String ipAddress) {
+    private void doLogWithIp(String action, User user, String resourceType, UUID resourceId, Map<String, Object> details, String ipAddress, String userAgent) {
         try {
-            saveAuditLog(action, user, resourceType, resourceId, details, ipAddress, null);
+            saveAuditLog(action, user, resourceType, resourceId, details, ipAddress, userAgent);
         } catch (Exception e) {
             log.error("Failed to save audit log: {}", e.getMessage());
         }
@@ -179,6 +191,52 @@ public class AuditLogService {
                 .totalElements(logs.getTotalElements())
                 .totalPages(logs.getTotalPages())
                 .build();
+    }
+
+    /**
+     * Export audit logs as CSV (no pagination, includes user_agent).
+     */
+    @Transactional(readOnly = true)
+    public String exportAuditLogsCsv(AuditLogFilterRequest filter) {
+        List<AuditLog> logs = auditLogRepository.findWithFiltersForExport(
+                filter.getUserId(),
+                filter.getClusterId() != null ? filter.getClusterId().toString() : null,
+                filter.getAction(),
+                filter.getResourceType(),
+                filter.getStartDate(),
+                filter.getEndDate()
+        );
+
+        StringBuilder csv = new StringBuilder();
+        csv.append("timestamp,user_email,action,resource_type,resource_id,ip_address,user_agent,details\n");
+
+        for (AuditLog entry : logs) {
+            csv.append(escapeCsv(entry.getTimestamp() != null ? entry.getTimestamp().toString() : ""));
+            csv.append(',');
+            csv.append(escapeCsv(entry.getUserEmail() != null ? entry.getUserEmail() : ""));
+            csv.append(',');
+            csv.append(escapeCsv(entry.getAction() != null ? entry.getAction() : ""));
+            csv.append(',');
+            csv.append(escapeCsv(entry.getResourceType() != null ? entry.getResourceType() : ""));
+            csv.append(',');
+            csv.append(escapeCsv(entry.getResourceId() != null ? entry.getResourceId().toString() : ""));
+            csv.append(',');
+            csv.append(escapeCsv(entry.getIpAddress() != null ? entry.getIpAddress() : ""));
+            csv.append(',');
+            csv.append(escapeCsv(entry.getUserAgent() != null ? entry.getUserAgent() : ""));
+            csv.append(',');
+            csv.append(escapeCsv(entry.getDetails() != null ? entry.getDetails().toString() : ""));
+            csv.append('\n');
+        }
+
+        return csv.toString();
+    }
+
+    private String escapeCsv(String value) {
+        if (value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        }
+        return value;
     }
 
     /**

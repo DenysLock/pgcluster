@@ -130,17 +130,18 @@ public class BackupService {
         backup = backupRepository.save(backup);
         log.info("Created manual {} backup {} for cluster {}", normalizedType, backup.getId(), cluster.getSlug());
 
-        // Capture IP before async call (will be lost in async context)
+        // Capture IP and user-agent before async call (will be lost in async context)
         String clientIp = auditLogService.getCurrentRequestIp();
+        String userAgent = auditLogService.getCurrentRequestUserAgent();
 
-        // Audit log with pre-captured IP
+        // Audit log with pre-captured IP and user-agent
         auditLogService.logAsync(AuditLog.BACKUP_INITIATED, user, "backup", backup.getId(),
                 Map.of(
                         "cluster_id", cluster.getId().toString(),
                         "cluster_name", cluster.getName(),
                         "cluster_slug", cluster.getSlug(),
                         "backup_type", normalizedType
-                ), clientIp);
+                ), clientIp, userAgent);
 
         // Publish event to trigger async backup after transaction commits
         eventPublisher.publishEvent(new BackupCreatedEvent(this, backup.getId()));
@@ -432,8 +433,9 @@ public class BackupService {
      */
     @Transactional
     public void deleteBackup(UUID clusterId, UUID backupId, User user, boolean confirmed) {
-        // Capture IP before async audit log
+        // Capture IP and user-agent before async audit log
         String clientIp = auditLogService.getCurrentRequestIp();
+        String userAgent = auditLogService.getCurrentRequestUserAgent();
 
         Cluster cluster = clusterRepository.findByIdAndUser(clusterId, user)
                 .orElseThrow(() -> new IllegalArgumentException("Cluster not found"));
@@ -507,14 +509,14 @@ public class BackupService {
             log.info("Dependent backup {} marked as deleted", dependent.getId());
         }
 
-        // Audit log with pre-captured IP
+        // Audit log with pre-captured IP and user-agent
         auditLogService.logAsync(AuditLog.BACKUP_DELETED, user, "backup", backupId,
                 Map.of(
                         "cluster_id", cluster.getId().toString(),
                         "cluster_name", cluster.getName(),
                         "cluster_slug", cluster.getSlug(),
                         "dependent_count", dependentBackups.size()
-                ), clientIp);
+                ), clientIp, userAgent);
 
         log.info("Backup deletion completed: {} primary + {} dependents deleted",
                 1, dependentBackups.size());
@@ -555,8 +557,9 @@ public class BackupService {
      */
     @Transactional
     public RestoreJob restoreBackup(UUID clusterId, UUID backupId, RestoreRequest request, User user) {
-        // Capture IP before async audit log
+        // Capture IP and user-agent before async audit log
         String clientIp = auditLogService.getCurrentRequestIp();
+        String userAgent = auditLogService.getCurrentRequestUserAgent();
 
         Cluster sourceCluster = clusterRepository.findByIdAndUser(clusterId, user)
                 .orElseThrow(() -> new IllegalArgumentException("Cluster not found"));
@@ -672,7 +675,7 @@ public class BackupService {
             restoreDetails.put("target_cluster_name", "in-place");
         }
         auditLogService.logAsync(AuditLog.BACKUP_RESTORE_INITIATED, user, "backup", backupId,
-                restoreDetails, clientIp);
+                restoreDetails, clientIp, userAgent);
 
         // Audit log: CLUSTER_CREATED for the restored cluster (if new cluster was created)
         if (targetCluster != null) {
@@ -686,7 +689,7 @@ public class BackupService {
                             "restored_from_cluster_id", sourceCluster.getId().toString(),
                             "restored_from_cluster_slug", sourceCluster.getSlug(),
                             "restored_from_backup_id", backupId.toString()
-                    ), clientIp);
+                    ), clientIp, userAgent);
         }
 
         // Publish event to trigger async restore after transaction commits

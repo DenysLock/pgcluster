@@ -128,6 +128,21 @@ import { SpinnerComponent } from '../../../shared/components';
           <div class="flex gap-2">
             <button type="submit" class="btn-primary">Apply</button>
             <button type="button" (click)="clearFilters()" class="btn-secondary">Clear</button>
+            <button
+              type="button"
+              (click)="downloadCsv()"
+              [disabled]="exporting()"
+              class="btn-secondary flex items-center gap-1.5"
+            >
+              @if (exporting()) {
+                <app-spinner size="sm" />
+              } @else {
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              }
+              CSV
+            </button>
           </div>
         </form>
       </div>
@@ -249,6 +264,7 @@ export class AuditLogListComponent implements OnInit {
   private fb = inject(FormBuilder);
 
   loading = signal(true);
+  exporting = signal(false);
   logs = signal<AuditLog[]>([]);
   response = signal<AuditLogListResponse | null>(null);
   currentPage = signal(0);
@@ -414,6 +430,31 @@ export class AuditLogListComponent implements OnInit {
       this.currentPage.update(p => p + 1);
       this.loadLogs();
     }
+  }
+
+  downloadCsv(): void {
+    this.exporting.set(true);
+    const filters = this.filterForm.value;
+
+    this.adminService.exportAuditLogsCsv({
+      userId: this.selectedUser()?.id || undefined,
+      clusterId: this.selectedCluster()?.id || undefined,
+      action: filters.action || undefined,
+      resourceType: filters.resourceType || undefined,
+      startDate: filters.startDate ? new Date(filters.startDate).toISOString() : undefined,
+      endDate: filters.endDate ? new Date(filters.endDate + 'T23:59:59').toISOString() : undefined
+    }).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `audit-logs-${new Date().toISOString().substring(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        this.exporting.set(false);
+      },
+      error: () => this.exporting.set(false)
+    });
   }
 
   formatTimestamp(timestamp: string): string {

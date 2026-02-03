@@ -11,7 +11,9 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -223,5 +225,38 @@ public class AdminController {
 
         AuditLogListResponse response = auditLogService.getAuditLogs(filter, page, size);
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/audit-logs/export")
+    @Operation(summary = "Export audit logs as CSV")
+    public ResponseEntity<byte[]> exportAuditLogs(
+            @RequestParam(required = false) UUID userId,
+            @RequestParam(required = false) UUID clusterId,
+            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String resourceType,
+            @RequestParam(required = false) String startDate,
+            @RequestParam(required = false) String endDate) {
+
+        AuditLogFilterRequest filter = new AuditLogFilterRequest();
+        filter.setUserId(userId);
+        filter.setClusterId(clusterId);
+        filter.setAction(action);
+        filter.setResourceType(resourceType);
+
+        if (startDate != null && !startDate.isBlank()) {
+            filter.setStartDate(Instant.parse(startDate));
+        }
+        if (endDate != null && !endDate.isBlank()) {
+            filter.setEndDate(Instant.parse(endDate));
+        }
+
+        String csv = auditLogService.exportAuditLogsCsv(filter);
+        String filename = "audit-logs-" + Instant.now().toString().substring(0, 10) + ".csv";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.parseMediaType("text/csv"));
+        headers.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"");
+
+        return ResponseEntity.ok().headers(headers).body(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 }

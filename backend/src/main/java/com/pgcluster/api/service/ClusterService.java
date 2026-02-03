@@ -173,8 +173,9 @@ public class ClusterService {
      * Get cluster credentials, access is logged.
      */
     public ClusterCredentialsResponse getClusterCredentials(UUID id, User user) {
-        // Capture IP before async audit log
+        // Capture IP and user-agent before async audit log
         String clientIp = auditLogService.getCurrentRequestIp();
+        String userAgent = auditLogService.getCurrentRequestUserAgent();
 
         Cluster cluster = clusterRepository.findByIdAndUser(id, user)
                 .orElseThrow(() -> new ApiException("Cluster not found", HttpStatus.NOT_FOUND));
@@ -185,12 +186,12 @@ public class ClusterService {
 
         log.info("Credentials accessed for cluster {} by user {}", cluster.getSlug(), user.getEmail());
 
-        // Audit log with pre-captured IP
+        // Audit log with pre-captured IP and user-agent
         auditLogService.logAsync(AuditLog.CREDENTIALS_ACCESSED, user, "cluster", cluster.getId(),
                 java.util.Map.of(
                         "cluster_name", cluster.getName(),
                         "cluster_slug", cluster.getSlug()
-                ), clientIp);
+                ), clientIp, userAgent);
 
         int pooledPort = 6432;
 
@@ -221,8 +222,9 @@ public class ClusterService {
      * Remaining provisioning (SSH, containers, DNS) is async.
      */
     public ClusterResponse createCluster(ClusterCreateRequest request, User user) {
-        // Capture IP before any async operations (will be lost in async context)
+        // Capture IP and user-agent before any async operations (will be lost in async context)
         String clientIp = auditLogService.getCurrentRequestIp();
+        String userAgent = auditLogService.getCurrentRequestUserAgent();
 
         // Validate that all selected regions are available
         validateNodeRegions(request.getNodeRegions(), request.getNodeSize());
@@ -271,7 +273,7 @@ public class ClusterService {
             // ASYNC: Continue provisioning (SSH, containers, DNS)
             provisioningService.continueProvisioningFromServers(cluster, nodes);
 
-            // Audit log with pre-captured IP
+            // Audit log with pre-captured IP and user-agent
             auditLogService.logAsync(AuditLog.CLUSTER_CREATED, user, "cluster", cluster.getId(),
                     java.util.Map.of(
                             "cluster_name", cluster.getName(),
@@ -279,7 +281,7 @@ public class ClusterService {
                             "node_count", cluster.getNodeCount(),
                             "node_size", cluster.getNodeSize(),
                             "postgres_version", cluster.getPostgresVersion()
-                    ), clientIp);
+                    ), clientIp, userAgent);
 
             return ClusterResponse.fromEntity(cluster);
 

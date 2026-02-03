@@ -96,16 +96,17 @@ public class ExportService {
         export = exportRepository.save(export);
         log.info("Created export {} for cluster {}", export.getId(), cluster.getSlug());
 
-        // Capture IP before async call (will be lost in async context)
+        // Capture IP and user-agent before async call (will be lost in async context)
         String clientIp = auditLogService.getCurrentRequestIp();
+        String userAgent = auditLogService.getCurrentRequestUserAgent();
 
-        // Audit log with pre-captured IP
+        // Audit log with pre-captured IP and user-agent
         auditLogService.logAsync(AuditLog.EXPORT_INITIATED, user, "export", export.getId(),
                 java.util.Map.of(
                         "cluster_id", cluster.getId().toString(),
                         "cluster_name", cluster.getName(),
                         "cluster_slug", cluster.getSlug()
-                ), clientIp);
+                ), clientIp, userAgent);
 
         // Publish event to trigger async export after transaction commits
         eventPublisher.publishEvent(new ExportCreatedEvent(this, export.getId()));
@@ -359,8 +360,9 @@ public class ExportService {
      */
     @Transactional
     public void deleteExport(UUID clusterId, UUID exportId, User user) {
-        // Capture IP before async audit log
+        // Capture IP and user-agent before async audit log
         String clientIp = auditLogService.getCurrentRequestIp();
+        String userAgent = auditLogService.getCurrentRequestUserAgent();
 
         Export export = getExport(clusterId, exportId, user);
 
@@ -379,14 +381,14 @@ public class ExportService {
             }
         }
 
-        // Audit log with pre-captured IP
+        // Audit log with pre-captured IP and user-agent
         Cluster cluster = export.getCluster();
         auditLogService.logAsync(AuditLog.EXPORT_DELETED, user, "export", exportId,
                 java.util.Map.of(
                         "cluster_id", cluster.getId().toString(),
                         "cluster_name", cluster.getName(),
                         "cluster_slug", cluster.getSlug()
-                ), clientIp);
+                ), clientIp, userAgent);
 
         exportRepository.delete(export);
         log.info("Deleted export {} for cluster {}", exportId, clusterId);

@@ -125,6 +125,29 @@ export class AdminService {
     return this.http.get<AuditLogListResponse>(`${environment.apiUrl}/api/v1/admin/audit-logs`, { params: httpParams });
   }
 
+  exportAuditLogsCsv(params: {
+    userId?: string;
+    clusterId?: string;
+    action?: string;
+    resourceType?: string;
+    startDate?: string;
+    endDate?: string;
+  } = {}): Observable<Blob> {
+    let httpParams = new HttpParams();
+
+    if (params.userId) httpParams = httpParams.set('userId', params.userId);
+    if (params.clusterId) httpParams = httpParams.set('clusterId', params.clusterId);
+    if (params.action) httpParams = httpParams.set('action', params.action);
+    if (params.resourceType) httpParams = httpParams.set('resourceType', params.resourceType);
+    if (params.startDate) httpParams = httpParams.set('startDate', params.startDate);
+    if (params.endDate) httpParams = httpParams.set('endDate', params.endDate);
+
+    return this.http.get(`${environment.apiUrl}/api/v1/admin/audit-logs/export`, {
+      params: httpParams,
+      responseType: 'blob'
+    });
+  }
+
   getUserActivity(userId: string): Observable<AuditLog[]> {
     return this.http.get<AuditLog[]>(`${environment.apiUrl}/api/v1/admin/users/${userId}/activity`);
   }
