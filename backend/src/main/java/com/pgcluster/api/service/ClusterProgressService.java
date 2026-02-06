@@ -44,6 +44,11 @@ public class ClusterProgressService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void updateStatus(UUID clusterId, String status, String errorMessage) {
         clusterRepository.findById(clusterId).ifPresent(cluster -> {
+            // Don't overwrite DELETING/DELETED status (e.g., from a failed provisioning thread)
+            if (Cluster.STATUS_DELETING.equals(cluster.getStatus()) || Cluster.STATUS_DELETED.equals(cluster.getStatus())) {
+                log.info("Skipping status update to '{}' for cluster {} — already {}", status, cluster.getSlug(), cluster.getStatus());
+                return;
+            }
             cluster.setStatus(status);
             if (errorMessage != null) {
                 cluster.setErrorMessage(errorMessage);

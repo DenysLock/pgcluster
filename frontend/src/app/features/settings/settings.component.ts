@@ -24,27 +24,6 @@ import { CardComponent } from '../../shared/components';
             <label class="text-sm font-medium">Role</label>
             <p class="text-sm text-muted-foreground capitalize">{{ userRole() }}</p>
           </div>
-          <div class="grid gap-1">
-            <label class="text-sm font-medium">Member since</label>
-            <p class="text-sm text-muted-foreground">{{ memberSince() }}</p>
-          </div>
-        </div>
-      </app-card>
-
-      <app-card title="Account Actions">
-        <div class="space-y-4">
-          <div class="flex items-center justify-between">
-            <div>
-              <p class="font-medium">Change Password</p>
-              <p class="text-sm text-muted-foreground">Update your account password</p>
-            </div>
-            <button
-              disabled
-              class="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2"
-            >
-              Coming Soon
-            </button>
-          </div>
         </div>
       </app-card>
     </div>

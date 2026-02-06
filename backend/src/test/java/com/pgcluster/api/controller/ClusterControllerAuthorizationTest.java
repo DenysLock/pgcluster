@@ -120,7 +120,7 @@ class ClusterControllerAuthorizationTest {
         @DisplayName("should reject request without authentication")
         void shouldReturn401WithoutAuth() throws Exception {
             mockMvc.perform(get("/api/v1/clusters"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
     }
 
@@ -199,7 +199,7 @@ class ClusterControllerAuthorizationTest {
         void shouldRejectInvalidToken() throws Exception {
             mockMvc.perform(get("/api/v1/clusters")
                             .header("Authorization", "Bearer invalid.token.here"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
 
         @Test
@@ -207,7 +207,7 @@ class ClusterControllerAuthorizationTest {
         void shouldRejectMalformedToken() throws Exception {
             mockMvc.perform(get("/api/v1/clusters")
                             .header("Authorization", "Bearer not-a-jwt"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
 
         @Test
@@ -215,7 +215,7 @@ class ClusterControllerAuthorizationTest {
         void shouldRejectMissingBearerPrefix() throws Exception {
             mockMvc.perform(get("/api/v1/clusters")
                             .header("Authorization", user1Token))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
     }
 }

@@ -59,25 +59,6 @@ class SecurityConfigTest {
     class PublicEndpoints {
 
         @Test
-        @DisplayName("/api/v1/auth/register should be accessible without authentication")
-        void registerShouldBePublic() throws Exception {
-            String json = """
-                {
-                    "email": "new@test.com",
-                    "password": "securePassword123"
-                }
-                """;
-
-            MvcResult result = mockMvc.perform(post("/api/v1/auth/register")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(json))
-                    .andReturn();
-
-            // Should not return 401 (it should be accessible)
-            assertThat(result.getResponse().getStatus()).isNotEqualTo(401);
-        }
-
-        @Test
         @DisplayName("/api/v1/auth/login should be accessible without authentication")
         void loginShouldBePublic() throws Exception {
             String json = """
@@ -117,7 +98,7 @@ class SecurityConfigTest {
         @DisplayName("/api/v1/clusters should require authentication")
         void clustersShouldRequireAuth() throws Exception {
             mockMvc.perform(get("/api/v1/clusters"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
 
         @Test
@@ -132,7 +113,7 @@ class SecurityConfigTest {
         @DisplayName("/api/v1/user should require authentication")
         void userShouldRequireAuth() throws Exception {
             mockMvc.perform(get("/api/v1/user/profile"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
     }
 
@@ -187,7 +168,7 @@ class SecurityConfigTest {
             // Note: In real test, you'd need to mock the time or create an actually expired token
             mockMvc.perform(get("/api/v1/clusters")
                             .header("Authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwiZW1haWwiOiJ0ZXN0QHRlc3QuY29tIiwicm9sZSI6IlVTRVIiLCJhY3RpdmUiOnRydWUsImlhdCI6MTUxNjIzOTAyMiwiZXhwIjoxNTE2MjM5MDIyfQ.invalid"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
 
         @Test
@@ -195,7 +176,7 @@ class SecurityConfigTest {
         void shouldRejectMalformedToken() throws Exception {
             mockMvc.perform(get("/api/v1/clusters")
                             .header("Authorization", "Bearer not-a-valid-jwt-token"))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
 
         @Test
@@ -203,7 +184,7 @@ class SecurityConfigTest {
         void shouldRejectMissingBearerPrefix() throws Exception {
             mockMvc.perform(get("/api/v1/clusters")
                             .header("Authorization", userToken))
-                    .andExpect(status().isForbidden());
+                    .andExpect(status().isUnauthorized());
         }
     }
 
@@ -230,8 +211,8 @@ class SecurityConfigTest {
                             .header("Authorization", "Bearer " + inactiveToken))
                     .andReturn();
 
-            // Either OK (if no active check) or Forbidden (if checked)
-            assertThat(result.getResponse().getStatus()).isIn(200, 403);
+            // Either OK (if no active check), Forbidden (if checked), or Unauthorized
+            assertThat(result.getResponse().getStatus()).isIn(200, 401, 403);
         }
     }
 }

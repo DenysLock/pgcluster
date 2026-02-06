@@ -157,6 +157,44 @@
                 </configuration>
             </plugin>
             <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.12</version>
+                <configuration>
+                    <excludes>
+                        <exclude>com/pgcluster/api/service/ProvisioningService.class</exclude>
+                        <exclude>com/pgcluster/api/service/SshService.class</exclude>
+                        <exclude>com/pgcluster/api/service/SshService$*.class</exclude>
+                        <exclude>com/pgcluster/api/client/HetznerClient.class</exclude>
+                        <exclude>com/pgcluster/api/client/HetznerClient$*.class</exclude>
+                        <exclude>com/pgcluster/api/client/CloudflareClient.class</exclude>
+                        <exclude>com/pgcluster/api/client/CloudflareClient$*.class</exclude>
+                        <exclude>com/pgcluster/api/client/PrometheusClient.class</exclude>
+                        <exclude>com/pgcluster/api/client/PrometheusClient$*.class</exclude>
+                        <exclude>com/pgcluster/api/service/PgBackRestService.class</exclude>
+                        <exclude>com/pgcluster/api/service/DnsSyncService.class</exclude>
+                        <exclude>com/pgcluster/api/service/CloudInitService.class</exclude>
+                        <exclude>com/pgcluster/api/service/HostKeyVerifier.class</exclude>
+                        <exclude>com/pgcluster/api/service/S3StorageService.class</exclude>
+                        <exclude>com/pgcluster/api/service/PatroniService.class</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>

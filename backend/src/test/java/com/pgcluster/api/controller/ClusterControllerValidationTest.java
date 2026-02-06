@@ -144,19 +144,19 @@ class ClusterControllerValidationTest {
         }
 
         @Test
-        @DisplayName("should reject less than 3 node regions")
-        void shouldRejectLessThan3NodeRegions() throws Exception {
+        @DisplayName("should reject 2 node regions (only 1 or 3 allowed)")
+        void shouldRejectTwoNodeRegions() throws Exception {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName("Test Cluster");
             request.setNodeSize("cx23");
-            request.setNodeRegions(Arrays.asList("fsn1", "nbg1")); // Only 2
+            request.setNodeRegions(Arrays.asList("fsn1", "nbg1")); // 2 is invalid (must be 1 or 3)
 
             mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isBadRequest())
-                    .andExpect(jsonPath("$.errors.nodeRegions", notNullValue()));
+                    .andExpect(jsonPath("$.errors.validNodeCount", notNullValue()));
         }
 
         @Test
@@ -286,7 +286,7 @@ class ClusterControllerValidationTest {
             ClusterCreateRequest request = new ClusterCreateRequest();
             request.setName(""); // invalid
             request.setNodeSize("invalid"); // invalid
-            request.setNodeRegions(Arrays.asList("fsn1")); // invalid - needs 3
+            request.setNodeRegions(Arrays.asList("fsn1", "nbg1")); // invalid - 2 nodes not allowed (must be 1 or 3)
 
             mockMvc.perform(post("/api/v1/clusters")
                             .header("Authorization", "Bearer " + userToken)

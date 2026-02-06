@@ -190,7 +190,11 @@ public class ProvisioningService {
             continueProvisioning(cluster, nodes, replicatorPassword);
         } catch (Exception e) {
             log.error("Failed to provision cluster {}: {}", cluster.getSlug(), e.getMessage(), e);
-            clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_ERROR, e.getMessage());
+            if (!isClusterBeingDeleted(cluster.getId())) {
+                clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_ERROR, e.getMessage());
+            } else {
+                log.info("Cluster {} is being deleted, skipping error status update", cluster.getSlug());
+            }
         }
     }
 
@@ -203,7 +207,11 @@ public class ProvisioningService {
             provisionCluster(cluster);
         } catch (Exception e) {
             log.error("Failed to provision cluster {}: {}", cluster.getSlug(), e.getMessage(), e);
-            clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_ERROR, e.getMessage());
+            if (!isClusterBeingDeleted(cluster.getId())) {
+                clusterProgressService.updateStatus(cluster.getId(), Cluster.STATUS_ERROR, e.getMessage());
+            } else {
+                log.info("Cluster {} is being deleted, skipping error status update", cluster.getSlug());
+            }
         }
     }
 
@@ -247,7 +255,7 @@ public class ProvisioningService {
         // Phase 2: Wait for SSH to be available
         log.info("Phase 2: Waiting for SSH on all nodes...");
         clusterProgressService.updateProgress(cluster.getId(), Cluster.STEP_WAITING_SSH, 2);
-        waitForSsh(nodes);
+        waitForSsh(nodes, cluster.getId());
 
         // Check if cluster was deleted during SSH wait
         if (isClusterBeingDeleted(cluster.getId())) {
@@ -431,12 +439,29 @@ public class ProvisioningService {
     }
 
     /**
-     * Wait for SSH to be available on all nodes
+     * Wait for SSH to be available on all nodes.
+     * Checks for cluster deletion between attempts to abort early.
      */
-    private void waitForSsh(List<VpsNode> nodes) {
+    private void waitForSsh(List<VpsNode> nodes, UUID clusterId) {
         for (VpsNode node : nodes) {
             log.info("Waiting for SSH on {}...", node.getName());
-            boolean ready = sshService.waitForSsh(node.getPublicIp(), 60, 5000); // 5 minutes max
+            int maxAttempts = 60;
+            boolean ready = false;
+            for (int i = 0; i < maxAttempts; i++) {
+                if (isClusterBeingDeleted(clusterId)) {
+                    throw new RuntimeException("Cluster marked for deletion, aborting SSH wait");
+                }
+                if (sshService.isHostReachable(node.getPublicIp())) {
+                    ready = true;
+                    break;
+                }
+                try {
+                    Thread.sleep(5000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("SSH wait interrupted for " + node.getName());
+                }
+            }
             if (!ready) {
                 throw new RuntimeException("SSH not available on " + node.getName() + " after timeout");
             }
@@ -1365,7 +1390,7 @@ public class ProvisioningService {
         log.info("Phase 2: Waiting for SSH on all nodes...");
         clusterProgressService.updateProgress(targetCluster.getId(), Cluster.STEP_WAITING_SSH, 2);
         updateRestoreJobProgress(job, "WAITING_SSH", 15);
-        waitForSsh(nodes);
+        waitForSsh(nodes, targetCluster.getId());
 
         // Phase 3: Build cluster configuration
         log.info("Phase 3: Building cluster configuration...");
