@@ -2,6 +2,7 @@ package com.pgcluster.api.service;
 
 import com.pgcluster.api.client.HetznerClient;
 import com.pgcluster.api.event.BackupCreatedEvent;
+import com.pgcluster.api.model.dto.PitrRestoreRequest;
 import com.pgcluster.api.model.entity.AuditLog;
 import com.pgcluster.api.model.entity.Backup;
 import com.pgcluster.api.model.entity.Cluster;
@@ -26,6 +27,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -528,6 +530,148 @@ class BackupServiceTest {
             assertThat(metrics.get("backupCount")).isEqualTo(0);
             assertThat(metrics.get("oldestBackup")).isNull();
             assertThat(metrics.get("newestBackup")).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("getPitrWindow")
+    class GetPitrWindow {
+
+        @Test
+        @DisplayName("should return available PITR window")
+        void shouldReturnAvailableWindow() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+
+            Backup older = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            older.setEarliestRecoveryTime(Instant.parse("2026-01-01T10:00:00Z"));
+            older.setLatestRecoveryTime(Instant.parse("2026-01-01T11:00:00Z"));
+
+            Backup newer = createCompletedBackup(cluster, Backup.BACKUP_TYPE_INCR);
+            newer.setEarliestRecoveryTime(Instant.parse("2026-01-01T11:00:00Z"));
+            newer.setLatestRecoveryTime(Instant.parse("2026-01-01T12:00:00Z"));
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(newer, older));
+
+            var window = backupService.getPitrWindow(cluster.getId(), user);
+
+            assertThat(window.isAvailable()).isTrue();
+            assertThat(window.getEarliestPitrTime()).isEqualTo(older.getEarliestRecoveryTime());
+            assertThat(window.getLatestPitrTime()).isEqualTo(newer.getLatestRecoveryTime());
+        }
+
+        @Test
+        @DisplayName("should return unavailable when recovery timestamps are missing")
+        void shouldReturnUnavailableWindow() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+            Backup backup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            backup.setEarliestRecoveryTime(null);
+            backup.setLatestRecoveryTime(null);
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(backup));
+
+            var window = backupService.getPitrWindow(cluster.getId(), user);
+
+            assertThat(window.isAvailable()).isFalse();
+            assertThat(window.getEarliestPitrTime()).isNull();
+            assertThat(window.getLatestPitrTime()).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("restoreFromPitr")
+    class RestoreFromPitr {
+
+        @Test
+        @DisplayName("should create PITR restore job using closest preceding backup")
+        void shouldCreatePitrRestoreJob() {
+            User user = createTestUser();
+            Cluster sourceCluster = createRunningCluster();
+
+            Backup older = createCompletedBackup(sourceCluster, Backup.BACKUP_TYPE_FULL);
+            older.setCreatedAt(Instant.parse("2026-01-01T10:00:00Z"));
+            older.setEarliestRecoveryTime(Instant.parse("2026-01-01T09:00:00Z"));
+            older.setLatestRecoveryTime(Instant.parse("2026-01-01T10:30:00Z"));
+
+            Backup newer = createCompletedBackup(sourceCluster, Backup.BACKUP_TYPE_INCR);
+            newer.setCreatedAt(Instant.parse("2026-01-01T11:00:00Z"));
+            newer.setEarliestRecoveryTime(Instant.parse("2026-01-01T10:30:00Z"));
+            newer.setLatestRecoveryTime(Instant.parse("2026-01-01T12:00:00Z"));
+
+            Instant targetTime = Instant.parse("2026-01-01T11:30:00Z");
+            PitrRestoreRequest request = PitrRestoreRequest.builder()
+                    .targetTime(targetTime)
+                    .createNewCluster(true)
+                    .newClusterName("restored-cluster")
+                    .nodeRegions(List.of("fsn1"))
+                    .nodeSize("cx23")
+                    .postgresVersion("16")
+                    .build();
+
+            when(clusterRepository.findByIdAndUser(sourceCluster.getId(), user)).thenReturn(Optional.of(sourceCluster));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(sourceCluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(newer, older));
+            when(restoreJobRepository.findPendingJobsForCluster(sourceCluster.getId())).thenReturn(List.of());
+            when(hetznerClient.getAvailableLocationsForServerType("cx23")).thenReturn(Set.of("fsn1"));
+
+            when(clusterRepository.save(any(Cluster.class))).thenAnswer(invocation -> {
+                Cluster saved = invocation.getArgument(0);
+                if (saved.getId() == null) {
+                    saved.setId(UUID.randomUUID());
+                }
+                return saved;
+            });
+
+            when(restoreJobRepository.save(any(RestoreJob.class))).thenAnswer(invocation -> {
+                RestoreJob job = invocation.getArgument(0);
+                if (job.getId() == null) {
+                    job.setId(UUID.randomUUID());
+                }
+                return job;
+            });
+
+            RestoreJob job = backupService.restoreFromPitr(sourceCluster.getId(), request, user);
+
+            assertThat(job.getRestoreType()).isEqualTo(RestoreJob.TYPE_PITR);
+            assertThat(job.getTargetTime()).isEqualTo(targetTime);
+            assertThat(job.getBackup().getId()).isEqualTo(newer.getId());
+            assertThat(job.getTargetCluster()).isNotNull();
+
+            verify(auditLogService).logAsync(eq(AuditLog.BACKUP_RESTORE_INITIATED), eq(user), eq("backup"),
+                    eq(newer.getId()), any(), any(), any());
+            verify(eventPublisher).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("should throw when target time is outside global PITR window")
+        void shouldThrowWhenTargetOutsideWindow() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+
+            Backup backup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            backup.setEarliestRecoveryTime(Instant.parse("2026-01-01T09:00:00Z"));
+            backup.setLatestRecoveryTime(Instant.parse("2026-01-01T10:00:00Z"));
+
+            PitrRestoreRequest request = PitrRestoreRequest.builder()
+                    .targetTime(Instant.parse("2026-01-01T10:30:00Z"))
+                    .createNewCluster(true)
+                    .newClusterName("restore-outside-window")
+                    .nodeRegions(List.of("fsn1"))
+                    .nodeSize("cx23")
+                    .build();
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(backup));
+
+            assertThatThrownBy(() -> backupService.restoreFromPitr(cluster.getId(), request, user))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("after the latest recovery time");
         }
     }
 

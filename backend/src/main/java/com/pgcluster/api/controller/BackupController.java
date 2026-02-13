@@ -4,6 +4,8 @@ import com.pgcluster.api.model.dto.BackupDeletionInfo;
 import com.pgcluster.api.model.dto.BackupListResponse;
 import com.pgcluster.api.model.dto.BackupResponse;
 import com.pgcluster.api.model.dto.ExportResponse;
+import com.pgcluster.api.model.dto.PitrRestoreRequest;
+import com.pgcluster.api.model.dto.PitrWindowResponse;
 import com.pgcluster.api.model.dto.RestoreJobResponse;
 import com.pgcluster.api.model.dto.RestoreRequest;
 import com.pgcluster.api.model.entity.Backup;
@@ -95,6 +97,25 @@ public class BackupController {
             @Valid @RequestBody(required = false) RestoreRequest request,
             @AuthenticationPrincipal User user) {
         RestoreJob job = backupService.restoreBackup(clusterId, backupId, request, user);
+        return ResponseEntity.status(HttpStatus.CREATED).body(RestoreJobResponse.fromEntity(job));
+    }
+
+    @GetMapping("/pitr/window")
+    @Operation(summary = "Get PITR availability window for a cluster")
+    public ResponseEntity<PitrWindowResponse> getPitrWindow(
+            @PathVariable UUID clusterId,
+            @AuthenticationPrincipal User user) {
+        PitrWindowResponse window = backupService.getPitrWindow(clusterId, user);
+        return ResponseEntity.ok(window);
+    }
+
+    @PostMapping("/pitr/restore")
+    @Operation(summary = "Restore cluster to a selected PITR time (creates a new cluster)")
+    public ResponseEntity<RestoreJobResponse> restoreFromPitr(
+            @PathVariable UUID clusterId,
+            @Valid @RequestBody PitrRestoreRequest request,
+            @AuthenticationPrincipal User user) {
+        RestoreJob job = backupService.restoreFromPitr(clusterId, request, user);
         return ResponseEntity.status(HttpStatus.CREATED).body(RestoreJobResponse.fromEntity(job));
     }
 

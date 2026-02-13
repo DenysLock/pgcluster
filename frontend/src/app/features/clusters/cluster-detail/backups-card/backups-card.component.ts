@@ -7,20 +7,34 @@ import { BackupService } from '../../../../core/services/backup.service';
 import { ClusterService } from '../../../../core/services/cluster.service';
 import { AdminService } from '../../../../core/services/admin.service';
 import { NotificationService } from '../../../../core/services/notification.service';
-import { Backup, BackupDeletionInfo, BackupStatus, BackupMetrics, BackupStep, Location, ClusterNode, ServerType, ServerTypesResponse } from '../../../../core/models';
+import {
+  Backup,
+  BackupDeletionInfo,
+  BackupMetrics,
+  BackupStatus,
+  BackupStep,
+  ClusterNode,
+  Location,
+  PitrRestoreRequest,
+  PitrWindowResponse,
+  ServerType,
+  ServerTypesResponse
+} from '../../../../core/models';
 import { POLLING_INTERVALS } from '../../../../core/constants';
+import { PitrPickerComponent } from './pitr-picker.component';
+
 @Component({
   selector: 'app-backups-card',
   standalone: true,
   imports: [
     CommonModule,
-    FormsModule
+    FormsModule,
+    PitrPickerComponent
   ],
   template: `
     <div class="card">
       <div class="card-header">Backups</div>
       <div class="space-y-6">
-        <!-- Metrics Header -->
         @if (metrics()) {
           <div class="grid grid-cols-3 gap-4">
             <div class="p-4 bg-bg-tertiary border border-border rounded">
@@ -32,12 +46,11 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               <div class="text-xs uppercase tracking-wider text-muted-foreground">Backups</div>
             </div>
             <div class="p-4 bg-bg-tertiary border border-border rounded">
-              <div class="text-lg font-bold text-foreground">{{ pitrWindow() }}</div>
+              <div class="text-lg font-bold text-foreground">{{ pitrWindowLabel() }}</div>
               <div class="text-xs uppercase tracking-wider text-muted-foreground">PITR Available</div>
             </div>
           </div>
 
-          <!-- Storage Trend Chart -->
           @if (metrics()!.storageTrend.length > 0) {
             <div class="h-24 flex items-end gap-0.5">
               @for (point of metrics()!.storageTrend.slice(-30); track point.date) {
@@ -51,9 +64,22 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
           }
         }
 
-        <!-- Action Button with Type Selector (hidden for admin) -->
         @if (!isAdmin) {
-          <div class="flex items-center justify-end gap-2">
+          <div class="flex items-center justify-end gap-2 flex-wrap">
+            @if (pitrWindow()?.available) {
+              <button
+                (click)="openPitrRestoreDialog()"
+                [disabled]="restoring() || creating()"
+                class="btn-secondary h-9 px-4 whitespace-nowrap"
+                type="button"
+              >
+                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4v5h5M3.05 13a9 9 0 101.49-5.36L3 9m18 11v-5h-5" />
+                </svg>
+                Restore from PITR
+              </button>
+            }
+
             <select
               [(ngModel)]="selectedBackupType"
               [disabled]="!isClusterRunning || creating()"
@@ -67,6 +93,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               (click)="createBackup()"
               [disabled]="!isClusterRunning || creating()"
               class="btn-primary h-9 px-6 whitespace-nowrap"
+              type="button"
             >
               @if (creating()) {
                 <span class="spinner w-4 h-4 mr-2"></span>
@@ -81,13 +108,11 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
           </div>
         }
 
-        <!-- Loading state -->
         @if (loading()) {
           <div class="flex items-center justify-center py-8">
             <span class="spinner w-6 h-6"></span>
           </div>
         } @else if (backups().length === 0) {
-          <!-- Empty state -->
           <div class="text-center py-8 text-muted-foreground">
             <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
@@ -96,17 +121,14 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
             <p class="text-sm mt-1">Create your first backup to enable point-in-time recovery</p>
           </div>
         } @else {
-          <!-- Backups list -->
           <div class="border border-border divide-y divide-border">
             @for (backup of backups(); track backup.id) {
               <div class="p-4 hover:bg-bg-tertiary transition-colors">
                 <div class="flex items-start justify-between">
                   <div class="flex items-start gap-3">
-                    <!-- Status indicator -->
                     <div [class]="getStatusClasses(backup.status)" class="w-2 h-2 mt-2"></div>
 
                     <div class="flex-1">
-                      <!-- Header with badges -->
                       <div class="flex items-center gap-2 flex-wrap">
                         <span class="text-sm font-semibold text-foreground">{{ formatBackupType(backup.type) }}</span>
                         @if (backup.backupType) {
@@ -119,7 +141,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                         </span>
                       </div>
 
-                      <!-- Date and size -->
                       <div class="text-sm text-muted-foreground mt-1">
                         {{ formatDate(backup.createdAt) }}
                         @if (backup.formattedSize) {
@@ -128,7 +149,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                         }
                       </div>
 
-                      <!-- Recovery window for completed backups -->
                       @if (backup.status === 'completed' && backup.earliestRecoveryTime && backup.latestRecoveryTime) {
                         <div class="text-xs text-muted-foreground mt-1">
                           Recovery: {{ formatTime(backup.earliestRecoveryTime) }} - {{ formatTime(backup.latestRecoveryTime) }}
@@ -142,7 +162,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                         </div>
                       }
 
-                      <!-- Progress for in-progress backups -->
                       @if (backup.status === 'in_progress' || backup.status === 'pending') {
                         <div class="mt-2 space-y-1">
                           <div class="text-xs text-muted-foreground">
@@ -164,19 +183,18 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                         </div>
                       }
 
-                      <!-- Error message for failed backups -->
                       @if (backup.status === 'failed' && backup.errorMessage) {
                         <div class="text-xs text-status-error mt-1">{{ backup.errorMessage }}</div>
                       }
                     </div>
                   </div>
 
-                  <!-- Actions -->
                   <div class="flex items-center gap-2 ml-4">
                     @if (backup.status === 'completed' && !isAdmin) {
                       <button
                         (click)="openRestoreDialog(backup)"
                         class="btn-secondary h-8 px-3 text-sm"
+                        type="button"
                       >
                         <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -191,6 +209,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                         (click)="confirmDelete(backup)"
                         [disabled]="deleting() === backup.id"
                         class="text-muted-foreground hover:text-status-error transition-colors h-8 w-8 flex items-center justify-center disabled:opacity-50"
+                        type="button"
                       >
                         @if (deleting() === backup.id) {
                           <span class="spinner w-4 h-4"></span>
@@ -209,7 +228,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
         }
       </div>
 
-      <!-- Delete Confirmation Dialog -->
       @if (showDeleteDialog()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center">
           <div class="fixed inset-0 bg-slate-900/50" (click)="closeDeleteDialog()"></div>
@@ -228,6 +246,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                 <button
                   (click)="closeDeleteDialog()"
                   class="btn-secondary"
+                  type="button"
                 >
                   Close
                 </button>
@@ -283,6 +302,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                 <button
                   (click)="closeDeleteDialog()"
                   class="btn-secondary"
+                  type="button"
                 >
                   Cancel
                 </button>
@@ -290,6 +310,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                   (click)="deleteBackup()"
                   [disabled]="deleting()"
                   class="btn-danger"
+                  type="button"
                 >
                   @if (deleting()) {
                     <span class="spinner w-4 h-4 mr-2 border-status-error"></span>
@@ -304,7 +325,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
         </div>
       }
 
-      <!-- Restore Confirmation Dialog -->
       @if (showRestoreDialog()) {
         <div class="fixed inset-0 z-50 flex items-center justify-center">
           <div class="fixed inset-0 bg-slate-900/50" (click)="closeRestoreDialog()"></div>
@@ -324,8 +344,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                 </div>
               </div>
             </div>
-
-            <!-- Cluster Mode Toggle -->
             <div class="space-y-3 mb-4">
               <label class="label">Cluster Mode</label>
               <div class="flex gap-3">
@@ -348,7 +366,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               </div>
             </div>
 
-            <!-- Server Type Selection -->
             <div class="space-y-3 mb-4">
               <label class="label">Server Type</label>
 
@@ -362,7 +379,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                   {{ serverTypesError() }}
                 </div>
               } @else {
-                <!-- Category Tabs -->
                 <div class="flex gap-2 mb-3">
                   <button
                     type="button"
@@ -392,7 +408,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
                   </button>
                 </div>
 
-                <!-- Server Type Cards -->
                 <div class="grid grid-cols-4 gap-2">
                   @for (type of currentServerTypes(); track type.name) {
                     <button
@@ -412,7 +427,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               }
             </div>
 
-            <!-- Editable Cluster Name -->
             <div class="space-y-2 mb-4">
               <label class="label">Cluster Name</label>
               <input
@@ -427,7 +441,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               </p>
             </div>
 
-            <!-- Node Locations as Button Grid -->
             <div class="space-y-4 mb-6">
               <label class="label">Node {{ haMode() ? 'Locations' : 'Location' }}</label>
               <p class="text-xs text-muted-foreground -mt-2">
@@ -465,7 +478,6 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               }
             </div>
 
-            <!-- Unavailable selection warning -->
             @if (hasUnavailableRestoreSelections()) {
               <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 text-sm mb-4">
                 One or more selected regions are no longer available. Please select different regions.
@@ -491,6 +503,7 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
               <button
                 (click)="closeRestoreDialog()"
                 class="btn-secondary"
+                type="button"
               >
                 Cancel
               </button>
@@ -511,6 +524,242 @@ import { POLLING_INTERVALS } from '../../../../core/constants';
         </div>
       }
 
+      @if (showPitrDialog()) {
+        <div class="fixed inset-0 z-50 flex items-center justify-center">
+          <div class="fixed inset-0 bg-slate-900/50" (click)="closePitrRestoreDialog()"></div>
+          <div class="relative bg-white border border-border shadow-lg rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <h2 class="text-lg font-semibold text-foreground mb-4">Restore from PITR</h2>
+
+            <div class="bg-status-warning/10 border border-status-warning p-4 mb-6">
+              <div class="flex items-start gap-3">
+                <svg class="w-5 h-5 text-status-warning shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div>
+                  <p class="font-semibold text-status-warning">A new cluster will be created</p>
+                  <p class="text-sm text-status-warning/80 mt-1">Choose a UTC recovery point, then configure the target cluster.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 mb-6">
+              <div class="flex items-center gap-2">
+                <span [class]="pitrStep() === 1 ? 'w-6 h-6 rounded-full bg-primary text-white text-xs flex items-center justify-center' : 'w-6 h-6 rounded-full bg-muted text-muted-foreground text-xs flex items-center justify-center'">1</span>
+                <span [class]="pitrStep() === 1 ? 'text-sm font-semibold text-foreground' : 'text-sm text-muted-foreground'">Select PITR Time</span>
+              </div>
+              <div class="flex-1 h-px bg-border"></div>
+              <div class="flex items-center gap-2">
+                <span [class]="pitrStep() === 2 ? 'w-6 h-6 rounded-full bg-primary text-white text-xs flex items-center justify-center' : 'w-6 h-6 rounded-full bg-muted text-muted-foreground text-xs flex items-center justify-center'">2</span>
+                <span [class]="pitrStep() === 2 ? 'text-sm font-semibold text-foreground' : 'text-sm text-muted-foreground'">Configure Cluster</span>
+              </div>
+            </div>
+
+            @if (pitrStep() === 1) {
+              @if (pitrWindowLoading()) {
+                <div class="flex items-center justify-center py-10">
+                  <span class="spinner w-6 h-6"></span>
+                </div>
+              } @else if (!pitrWindow()?.available) {
+                <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 text-sm">
+                  PITR is currently unavailable for this cluster.
+                </div>
+                <div class="flex justify-end gap-3 mt-6">
+                  <button (click)="closePitrRestoreDialog()" class="btn-secondary" type="button">Close</button>
+                </div>
+              } @else {
+                <app-pitr-picker
+                  [earliestTime]="pitrWindow()!.earliestPitrTime"
+                  [latestTime]="pitrWindow()!.latestPitrTime"
+                  [initialTime]="selectedPitrTime()"
+                  (timeSelected)="onPitrTimeSelected($event)"
+                />
+
+                <div class="space-y-2 mt-4">
+                  <label class="label">Selected PITR time (UTC ISO)</label>
+                  <input class="input font-mono text-xs" type="text" [value]="selectedPitrTime()" readonly />
+                </div>
+
+                <div class="flex justify-end gap-3 mt-6">
+                  <button (click)="closePitrRestoreDialog()" class="btn-secondary" type="button">Cancel</button>
+                  <button
+                    (click)="goToPitrStep2()"
+                    [disabled]="!canContinuePitrStep()"
+                    class="btn-primary"
+                    type="button"
+                  >
+                    Continue
+                  </button>
+                </div>
+              }
+            } @else {
+              <div class="space-y-3 mb-4">
+                <label class="label">Cluster Mode</label>
+                <div class="flex gap-3">
+                  <button
+                    type="button"
+                    (click)="toggleHaMode(false)"
+                    [ngClass]="!haMode() ? 'flex-1 p-3 border rounded text-left transition-all border-primary bg-primary/10' : 'flex-1 p-3 border rounded text-left transition-all border-border hover:border-muted-foreground'"
+                  >
+                    <div class="text-sm font-semibold text-foreground">Single Node</div>
+                    <div class="text-xs text-muted-foreground mt-1">1 node, lower cost, no HA</div>
+                  </button>
+                  <button
+                    type="button"
+                    (click)="toggleHaMode(true)"
+                    [ngClass]="haMode() ? 'flex-1 p-3 border rounded text-left transition-all border-primary bg-primary/10' : 'flex-1 p-3 border rounded text-left transition-all border-border hover:border-muted-foreground'"
+                  >
+                    <div class="text-sm font-semibold text-foreground">High Availability</div>
+                    <div class="text-xs text-muted-foreground mt-1">3 nodes, auto-failover</div>
+                  </button>
+                </div>
+              </div>
+
+              <div class="space-y-3 mb-4">
+                <label class="label">Server Type</label>
+
+                @if (serverTypesLoading()) {
+                  <div class="flex items-center gap-2 text-muted-foreground py-4">
+                    <span class="spinner w-4 h-4"></span>
+                    <span>Loading server types...</span>
+                  </div>
+                } @else if (serverTypesError()) {
+                  <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 text-sm">
+                    {{ serverTypesError() }}
+                  </div>
+                } @else {
+                  <div class="flex gap-2 mb-3">
+                    <button
+                      type="button"
+                      (click)="selectCategory('shared')"
+                      class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border rounded transition-colors"
+                      [class.bg-primary]="selectedCategory() === 'shared'"
+                      [class.text-white]="selectedCategory() === 'shared'"
+                      [class.border-primary]="selectedCategory() === 'shared'"
+                      [class.bg-transparent]="selectedCategory() !== 'shared'"
+                      [class.text-muted-foreground]="selectedCategory() !== 'shared'"
+                      [class.border-border]="selectedCategory() !== 'shared'"
+                    >
+                      Shared vCPU
+                    </button>
+                    <button
+                      type="button"
+                      (click)="selectCategory('dedicated')"
+                      class="px-4 py-2 text-sm font-semibold uppercase tracking-wider border rounded transition-colors"
+                      [class.bg-primary]="selectedCategory() === 'dedicated'"
+                      [class.text-white]="selectedCategory() === 'dedicated'"
+                      [class.border-primary]="selectedCategory() === 'dedicated'"
+                      [class.bg-transparent]="selectedCategory() !== 'dedicated'"
+                      [class.text-muted-foreground]="selectedCategory() !== 'dedicated'"
+                      [class.border-border]="selectedCategory() !== 'dedicated'"
+                    >
+                      Dedicated vCPU
+                    </button>
+                  </div>
+
+                  <div class="grid grid-cols-4 gap-2">
+                    @for (type of currentServerTypes(); track type.name) {
+                      <button
+                        type="button"
+                        (click)="selectServerType(type)"
+                        [ngClass]="getServerTypeClass(type)"
+                        [disabled]="!isServerTypeAvailable(type)"
+                      >
+                        <div class="font-semibold text-foreground text-sm">{{ type.name }}</div>
+                        <div class="text-xs text-muted-foreground space-y-0.5 mt-1">
+                          <div>{{ type.cores }} vCPU</div>
+                          <div>{{ type.memory }} GB</div>
+                        </div>
+                      </button>
+                    }
+                  </div>
+                }
+              </div>
+
+              <div class="space-y-2 mb-4">
+                <label class="label">Cluster Name</label>
+                <input
+                  type="text"
+                  [value]="restoreClusterName()"
+                  (input)="restoreClusterName.set($any($event.target).value)"
+                  class="input"
+                  placeholder="my-restored-cluster"
+                />
+                <p class="text-xs text-muted-foreground">Use lowercase letters, numbers, and hyphens only.</p>
+              </div>
+
+              <div class="space-y-4 mb-6">
+                <label class="label">Node {{ haMode() ? 'Locations' : 'Location' }}</label>
+                <p class="text-xs text-muted-foreground -mt-2">
+                  Select a region for {{ haMode() ? 'each node' : 'your node' }}. Grayed buttons are unavailable for the selected server type.
+                </p>
+
+                @if (locationsLoading() || serverTypesLoading()) {
+                  <div class="flex items-center gap-2 text-muted-foreground py-4">
+                    <span class="spinner w-4 h-4"></span>
+                    <span>Loading locations...</span>
+                  </div>
+                } @else {
+                  <div class="space-y-4">
+                    @for (nodeIndex of (haMode() ? [0, 1, 2] : [0]); track nodeIndex) {
+                      <div class="space-y-2">
+                        <span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          {{ haMode() ? 'Node ' + (nodeIndex + 1) : 'Node' }}
+                        </span>
+                        <div class="grid grid-cols-2 md:grid-cols-3 gap-2">
+                          @for (loc of filteredLocations(); track loc.id) {
+                            <button
+                              type="button"
+                              (click)="selectRestoreLocation(nodeIndex, loc.id)"
+                              [ngClass]="getRestoreLocationClass(nodeIndex, loc)"
+                              [disabled]="!loc.available"
+                            >
+                              <span>{{ loc.flag }}</span>
+                              <span class="text-xs truncate">{{ loc.city }}</span>
+                            </button>
+                          }
+                        </div>
+                      </div>
+                    }
+                  </div>
+                }
+              </div>
+
+              @if (hasUnavailableRestoreSelections()) {
+                <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 text-sm mb-4">
+                  One or more selected regions are no longer available. Please select different regions.
+                </div>
+              }
+
+              <div class="space-y-3 mb-6 border-t border-border pt-4">
+                <div class="flex justify-between text-sm">
+                  <span class="text-muted-foreground">PostgreSQL version:</span>
+                  <span class="font-semibold text-foreground">{{ sourcePostgresVersion }}</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-muted-foreground">Recovery point (UTC):</span>
+                  <span class="font-semibold text-foreground">{{ formatUtcIso(selectedPitrTime()) }}</span>
+                </div>
+                <div class="flex justify-between text-sm">
+                  <span class="text-muted-foreground">Source backup:</span>
+                  <span class="font-semibold text-foreground">Auto-selected by server</span>
+                </div>
+              </div>
+
+              <div class="flex justify-end gap-3">
+                <button (click)="backToPitrStep1()" class="btn-secondary" type="button">Back</button>
+                <button (click)="onPitrRestoreClick()" class="btn-primary" type="button">
+                  @if (restoring()) {
+                    <span class="spinner w-4 h-4 mr-2"></span>
+                    Restoring...
+                  } @else {
+                    Restore
+                  }
+                </button>
+              </div>
+            }
+          </div>
+        </div>
+      }
     </div>
   `
 })
@@ -534,15 +783,21 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   deleteErrorMessage = signal<string | null>(null);
   deletionInfo = signal<BackupDeletionInfo | null>(null);
   loadingDeletionInfo = signal(false);
+
   showRestoreDialog = signal(false);
   selectedBackup = signal<Backup | null>(null);
 
-  // Restore dialog state
+  showPitrDialog = signal(false);
+  pitrStep = signal<1 | 2>(1);
+  pitrWindow = signal<PitrWindowResponse | null>(null);
+  pitrWindowLoading = signal(false);
+  selectedPitrTime = signal('');
+
   locations = signal<Location[]>([]);
   locationsLoading = signal(false);
   restoreNodeRegions = signal<string[]>(['', '', '']);
   restoreClusterName = signal('');
-  // HA mode and server type selection for restore
+
   haMode = signal<boolean>(true);
   selectedCategory = signal<'shared' | 'dedicated'>('shared');
   selectedServerType = signal<string>('cx23');
@@ -550,14 +805,12 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   serverTypesLoading = signal(false);
   serverTypesError = signal<string | null>(null);
 
-  // Computed: current server types based on selected category
   currentServerTypes = computed(() => {
     const types = this.serverTypes();
     if (!types) return [];
     return this.selectedCategory() === 'shared' ? types.shared : types.dedicated;
   });
 
-  // Computed: filter locations based on selected server type availability
   filteredLocations = computed(() => {
     const locs = this.locations();
     const types = this.serverTypes();
@@ -576,7 +829,6 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     }));
   });
 
-  // Backup type selector
   selectedBackupType: 'full' | 'diff' | 'incr' = 'incr';
 
   private backupToDelete: Backup | null = null;
@@ -591,7 +843,7 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     private router: Router
   ) {}
 
-  pitrWindow = computed(() => {
+  pitrWindowLabel = computed(() => {
     const m = this.metrics();
     if (!m || !m.earliestPitrTime || !m.latestPitrTime) return 'N/A';
 
@@ -610,7 +862,8 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.loadBackups();
     if (!this.isAdmin) {
-      this.loadMetrics();  // Skip metrics for admin (no admin endpoint)
+      this.loadMetrics();
+      this.loadPitrWindow();
     }
     this.startPolling();
   }
@@ -626,9 +879,11 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
     request$.subscribe({
       next: (response) => {
-        // API excludes deleted backups by default
         this.backups.set(response.backups);
         this.loading.set(false);
+        if (!this.isAdmin) {
+          this.loadPitrWindow();
+        }
       },
       error: (err) => {
         this.loading.set(false);
@@ -644,7 +899,30 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
         this.maxStorageSize = Math.max(...metrics.storageTrend.map(p => p.sizeBytes), 1);
       },
       error: () => {
-        // Silently fail - metrics are non-critical
+        // non-critical
+      }
+    });
+  }
+
+  private loadPitrWindow(): void {
+    if (this.isAdmin) return;
+
+    this.pitrWindowLoading.set(true);
+    this.backupService.getPitrWindow(this.clusterId).subscribe({
+      next: (window) => {
+        this.pitrWindow.set(window);
+        if (window.available && window.latestPitrTime) {
+          this.selectedPitrTime.set(window.latestPitrTime);
+        }
+        this.pitrWindowLoading.set(false);
+      },
+      error: () => {
+        this.pitrWindowLoading.set(false);
+        this.pitrWindow.set({
+          available: false,
+          earliestPitrTime: null,
+          latestPitrTime: null
+        });
       }
     });
   }
@@ -670,6 +948,8 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
         this.backups.update(list => [backup, ...list]);
         this.creating.set(false);
         this.loadBackups();
+        this.loadMetrics();
+        this.loadPitrWindow();
         const typeLabel = this.formatPhysicalType(this.selectedBackupType);
         this.notificationService.success(`${typeLabel} backup started`);
       },
@@ -687,7 +967,6 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     this.loadingDeletionInfo.set(true);
     this.showDeleteDialog.set(true);
 
-    // Fetch deletion info to show what will be deleted
     this.backupService.getBackupDeletionInfo(this.clusterId, backup.id).subscribe({
       next: (info) => {
         this.deletionInfo.set(info);
@@ -714,14 +993,12 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     const info = this.deletionInfo();
     this.deleting.set(backupId);
 
-    // Always pass confirm=true since user confirmed via dialog
     const request$ = this.isAdmin
       ? this.adminService.deleteClusterBackup(this.clusterId, backupId, true)
       : this.backupService.deleteBackup(this.clusterId, backupId, true);
 
     request$.subscribe({
       next: () => {
-        // Remove the primary backup and all dependents from the list
         const idsToRemove = new Set([backupId]);
         if (info?.dependentBackups) {
           info.dependentBackups.forEach(b => idsToRemove.add(b.id));
@@ -733,6 +1010,7 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
         this.showDeleteDialog.set(false);
         this.deletionInfo.set(null);
         this.loadMetrics();
+        this.loadPitrWindow();
 
         const count = idsToRemove.size;
         this.notificationService.success(
@@ -751,28 +1029,48 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
   openRestoreDialog(backup: Backup): void {
     this.selectedBackup.set(backup);
+    this.initializeRestoreForm();
+    this.showRestoreDialog.set(true);
+  }
 
-    // Pre-fill cluster name
+  closeRestoreDialog(): void {
+    this.showRestoreDialog.set(false);
+  }
+
+  openPitrRestoreDialog(): void {
+    if (!this.pitrWindow()?.available) return;
+
+    this.initializeRestoreForm();
+    this.pitrStep.set(1);
+
+    const defaultTime = this.pitrWindow()?.latestPitrTime;
+    if (defaultTime) {
+      this.selectedPitrTime.set(defaultTime);
+    }
+
+    this.showPitrDialog.set(true);
+  }
+
+  closePitrRestoreDialog(): void {
+    this.showPitrDialog.set(false);
+    this.pitrStep.set(1);
+  }
+
+  private initializeRestoreForm(): void {
     this.restoreClusterName.set(this.getRestoredClusterName());
 
-    // Pre-fill HA mode from source cluster node count
     const sourceNodeCount = this.clusterNodes.length;
     this.haMode.set(sourceNodeCount === 3);
 
-    // Pre-fill server type from source cluster
     this.selectedServerType.set(this.sourceNodeSize || 'cx23');
-
-    // Determine category based on server type
     if (this.sourceNodeSize?.startsWith('ccx')) {
       this.selectedCategory.set('dedicated');
     } else {
       this.selectedCategory.set('shared');
     }
 
-    // Pre-fill regions from source cluster nodes
     const sourceRegions = this.clusterNodes.map(n => n.location);
     if (this.haMode()) {
-      // Pad to 3 if needed
       while (sourceRegions.length < 3) {
         sourceRegions.push(sourceRegions[0] || 'fsn1');
       }
@@ -781,15 +1079,8 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
       this.restoreNodeRegions.set([sourceRegions[0] || 'fsn1']);
     }
 
-    // Load available locations and server types
     this.loadLocations();
     this.loadServerTypes();
-
-    this.showRestoreDialog.set(true);
-  }
-
-  closeRestoreDialog(): void {
-    this.showRestoreDialog.set(false);
   }
 
   private loadLocations(): void {
@@ -827,11 +1118,9 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     this.haMode.set(enabled);
 
     if (enabled) {
-      // Switch to HA: 3 nodes - copy first region to all
       const firstRegion = this.restoreNodeRegions()[0] || 'fsn1';
       this.restoreNodeRegions.set([firstRegion, firstRegion, firstRegion]);
     } else {
-      // Switch to single node: keep only first region
       const firstRegion = this.restoreNodeRegions()[0] || 'fsn1';
       this.restoreNodeRegions.set([firstRegion]);
     }
@@ -841,7 +1130,6 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     if (this.selectedCategory() === category) return;
     this.selectedCategory.set(category);
 
-    // Select first available server type in new category
     const types = this.serverTypes();
     if (types) {
       const categoryTypes = category === 'shared' ? types.shared : types.dedicated;
@@ -918,68 +1206,106 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     return `${base} border-border hover:border-muted-foreground text-muted-foreground`;
   }
 
-  canRestore(): boolean {
-    const regions = this.restoreNodeRegions();
-    const name = this.restoreClusterName();
-    const expectedNodeCount = this.haMode() ? 3 : 1;
-
-    const allRegionsSelected = regions.length === expectedNodeCount && regions.every(r => r !== '');
-    const allRegionsAvailable = regions.every(r => {
-      const loc = this.filteredLocations().find(l => l.id === r);
-      return loc?.available === true;
-    });
-    const validName = name.length >= 3 && /^[a-z][a-z0-9-]*$/.test(name);
-    const serverTypeSelected = !!this.selectedServerType();
-
-    return allRegionsSelected && allRegionsAvailable && validName &&
-           !this.locationsLoading() && !this.serverTypesLoading() && serverTypeSelected;
-  }
-
   hasUnavailableRestoreSelections(): boolean {
     return this.restoreNodeRegions().some(r => {
       if (!r) return false;
       const loc = this.filteredLocations().find(l => l.id === r);
-      return loc && !loc.available;
+      return !!loc && !loc.available;
     });
   }
 
   onRestoreClick(): void {
     if (this.restoring()) return;
+    if (!this.validateRestoreConfig()) return;
+    this.restoreBackup();
+  }
 
+  onPitrTimeSelected(timestamp: string): void {
+    this.selectedPitrTime.set(timestamp);
+  }
+
+  canContinuePitrStep(): boolean {
+    return this.isSelectedPitrTimeInWindow();
+  }
+
+  goToPitrStep2(): void {
+    if (!this.isSelectedPitrTimeInWindow()) {
+      this.notificationService.error('Selected PITR time is outside the available recovery window');
+      return;
+    }
+    this.pitrStep.set(2);
+  }
+
+  backToPitrStep1(): void {
+    this.pitrStep.set(1);
+  }
+
+  onPitrRestoreClick(): void {
+    if (this.restoring()) return;
+
+    if (!this.isSelectedPitrTimeInWindow()) {
+      this.notificationService.error('Selected PITR time is outside the available recovery window');
+      return;
+    }
+
+    if (!this.validateRestoreConfig()) return;
+
+    this.restoreFromPitr();
+  }
+
+  private isSelectedPitrTimeInWindow(): boolean {
+    const window = this.pitrWindow();
+    const selected = this.selectedPitrTime();
+
+    if (!window?.available || !selected) return false;
+
+    const targetMs = new Date(selected).getTime();
+    if (Number.isNaN(targetMs)) return false;
+
+    if (window.earliestPitrTime) {
+      const earliestMs = new Date(window.earliestPitrTime).getTime();
+      if (targetMs < earliestMs) return false;
+    }
+
+    if (window.latestPitrTime) {
+      const latestMs = new Date(window.latestPitrTime).getTime();
+      if (targetMs > latestMs) return false;
+    }
+
+    return true;
+  }
+
+  private validateRestoreConfig(): boolean {
     const name = this.restoreClusterName();
     const regions = this.restoreNodeRegions();
     const expectedNodeCount = this.haMode() ? 3 : 1;
 
-    // Validate cluster name
     if (!name || name.length < 3) {
       this.notificationService.error('Cluster name must be at least 3 characters');
-      return;
+      return false;
     }
 
     if (!/^[a-z][a-z0-9-]*$/.test(name)) {
       this.notificationService.error('Cluster name must start with a letter and contain only lowercase letters, numbers, and hyphens');
-      return;
+      return false;
     }
 
-    // Validate server type
     if (!this.selectedServerType()) {
       this.notificationService.error('Please select a server type');
-      return;
+      return false;
     }
 
-    // Validate regions
     if (regions.length !== expectedNodeCount || regions.some(r => !r)) {
       this.notificationService.error(`Please select a region for ${expectedNodeCount === 1 ? 'your node' : 'all ' + expectedNodeCount + ' nodes'}`);
-      return;
+      return false;
     }
 
     if (this.hasUnavailableRestoreSelections()) {
       this.notificationService.error('One or more selected regions are unavailable. Please select different regions.');
-      return;
+      return false;
     }
 
-    // All validations passed
-    this.restoreBackup();
+    return true;
   }
 
   restoreBackup(): void {
@@ -1001,7 +1327,6 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
         this.showRestoreDialog.set(false);
         this.notificationService.success('Restore job started. Navigating to new cluster...');
 
-        // Refresh cluster list and navigate to the new cluster
         if (restoreJob.targetClusterId) {
           this.clusterService.refreshClusters();
           this.router.navigate(['/clusters', restoreJob.targetClusterId]);
@@ -1014,11 +1339,44 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     });
   }
 
+  restoreFromPitr(): void {
+    const targetTime = this.selectedPitrTime();
+    if (!targetTime) return;
+
+    this.restoring.set(true);
+
+    const request: PitrRestoreRequest = {
+      targetTime,
+      createNewCluster: true,
+      newClusterName: this.restoreClusterName(),
+      nodeRegions: this.restoreNodeRegions(),
+      nodeSize: this.selectedServerType(),
+      postgresVersion: this.sourcePostgresVersion
+    };
+
+    this.backupService.restoreFromPitr(this.clusterId, request).subscribe({
+      next: (restoreJob) => {
+        this.restoring.set(false);
+        this.showPitrDialog.set(false);
+        this.pitrStep.set(1);
+        this.notificationService.success('PITR restore job started. Navigating to new cluster...');
+
+        if (restoreJob.targetClusterId) {
+          this.clusterService.refreshClusters();
+          this.router.navigate(['/clusters', restoreJob.targetClusterId]);
+        }
+      },
+      error: (err) => {
+        this.restoring.set(false);
+        this.notificationService.error(err.error?.message || 'Failed to start PITR restore');
+      }
+    });
+  }
+
   getRestoredClusterName(): string {
     const today = new Date();
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
     const suffix = `-restored-${dateStr}`;
-    // Strip any existing "-restored-YYYYMMDD" and everything after it
     const baseName = (this.clusterSlug || 'cluster').replace(/-restored-\d{8}.*$/, '');
     const maxBaseLength = 50 - suffix.length;
     return `${baseName.slice(0, maxBaseLength)}${suffix}`;
@@ -1095,6 +1453,13 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
       hour: '2-digit',
       minute: '2-digit'
     });
+  }
+
+  formatUtcIso(dateString: string | null | undefined): string {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString();
   }
 
   getExpiryText(expiresAt: string): string {

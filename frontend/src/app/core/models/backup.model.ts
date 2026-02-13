@@ -64,6 +64,21 @@ export interface RestoreRequest {
   postgresVersion?: string;
 }
 
+export interface PitrRestoreRequest {
+  targetTime: string;
+  createNewCluster?: boolean;
+  newClusterName?: string;
+  nodeRegions?: string[];
+  nodeSize?: string;
+  postgresVersion?: string;
+}
+
+export interface PitrWindowResponse {
+  available: boolean;
+  earliestPitrTime: string | null;
+  latestPitrTime: string | null;
+}
+
 export interface BackupDeletionInfo {
   backup: Backup;
   dependentBackups: Backup[];

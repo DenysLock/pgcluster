@@ -2,7 +2,17 @@ import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { Backup, BackupDeletionInfo, BackupListResponse, BackupMetrics, Export, RestoreJob, RestoreRequest } from '../models';
+import {
+  Backup,
+  BackupDeletionInfo,
+  BackupListResponse,
+  BackupMetrics,
+  Export,
+  PitrRestoreRequest,
+  PitrWindowResponse,
+  RestoreJob,
+  RestoreRequest
+} from '../models';
 
 @Injectable({
   providedIn: 'root'
@@ -67,6 +77,25 @@ export class BackupService {
     return this.http.post<RestoreJob>(
       `${environment.apiUrl}/api/v1/clusters/${clusterId}/backups/${backupId}/restore`,
       request || {}
+    );
+  }
+
+  /**
+   * Get PITR availability window for a cluster.
+   */
+  getPitrWindow(clusterId: string): Observable<PitrWindowResponse> {
+    return this.http.get<PitrWindowResponse>(
+      `${environment.apiUrl}/api/v1/clusters/${clusterId}/backups/pitr/window`
+    );
+  }
+
+  /**
+   * Restore cluster from a selected PITR time.
+   */
+  restoreFromPitr(clusterId: string, request: PitrRestoreRequest): Observable<RestoreJob> {
+    return this.http.post<RestoreJob>(
+      `${environment.apiUrl}/api/v1/clusters/${clusterId}/backups/pitr/restore`,
+      request
     );
   }
 

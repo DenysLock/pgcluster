@@ -84,6 +84,8 @@ class BackupControllerTest {
                 .requestedBackupType(Backup.BACKUP_TYPE_FULL)
                 .pgbackrestLabel("20260201-120000F")
                 .sizeBytes(1024L * 1024L)
+                .earliestRecoveryTime(Instant.now().minusSeconds(3600))
+                .latestRecoveryTime(Instant.now())
                 .createdAt(Instant.now())
                 .build();
         backup = backupRepository.save(backup);
@@ -305,6 +307,22 @@ class BackupControllerTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.backupCount", greaterThanOrEqualTo(0)))
                     .andExpect(jsonPath("$.totalSizeBytes", notNullValue()));
+        }
+    }
+
+    @Nested
+    @DisplayName("GET /api/v1/clusters/{clusterId}/backups/pitr/window")
+    class GetPitrWindow {
+
+        @Test
+        @DisplayName("should return PITR window for cluster")
+        void shouldReturnPitrWindow() throws Exception {
+            mockMvc.perform(get("/api/v1/clusters/" + cluster.getId() + "/backups/pitr/window")
+                            .header("Authorization", "Bearer " + userToken))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.available", is(true)))
+                    .andExpect(jsonPath("$.earliestPitrTime", notNullValue()))
+                    .andExpect(jsonPath("$.latestPitrTime", notNullValue()));
         }
     }
 }

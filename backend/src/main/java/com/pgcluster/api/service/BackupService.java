@@ -3,6 +3,8 @@ package com.pgcluster.api.service;
 import com.pgcluster.api.client.HetznerClient;
 import com.pgcluster.api.exception.ApiException;
 import com.pgcluster.api.model.dto.PgBackRestBackupInfo;
+import com.pgcluster.api.model.dto.PitrRestoreRequest;
+import com.pgcluster.api.model.dto.PitrWindowResponse;
 import com.pgcluster.api.model.dto.RestoreRequest;
 import com.pgcluster.api.util.FormatUtils;
 import com.pgcluster.api.model.entity.AuditLog;
@@ -553,14 +555,76 @@ public class BackupService {
     }
 
     /**
-     * Initiate restore from backup to a new cluster
+     * Get PITR availability window for a cluster.
+     */
+    @Transactional(readOnly = true)
+    public PitrWindowResponse getPitrWindow(UUID clusterId, User user) {
+        Cluster cluster = clusterRepository.findByIdAndUser(clusterId, user)
+                .orElseThrow(() -> new IllegalArgumentException("Cluster not found"));
+
+        List<Backup> completedBackups = getCompletedNonDeletedBackups(cluster);
+        PitrWindow window = calculatePitrWindow(completedBackups);
+
+        return PitrWindowResponse.builder()
+                .available(window.available())
+                .earliestPitrTime(window.earliest())
+                .latestPitrTime(window.latest())
+                .build();
+    }
+
+    /**
+     * Initiate PITR restore using cluster-level endpoint.
+     * The source backup is resolved automatically from the selected target time.
+     */
+    @Transactional
+    public RestoreJob restoreFromPitr(UUID clusterId, PitrRestoreRequest request, User user) {
+        if (!request.isCreateNewCluster()) {
+            throw new IllegalArgumentException("PITR currently supports only restore to a new cluster");
+        }
+
+        Cluster sourceCluster = clusterRepository.findByIdAndUser(clusterId, user)
+                .orElseThrow(() -> new IllegalArgumentException("Cluster not found"));
+
+        List<Backup> completedBackups = getCompletedNonDeletedBackups(sourceCluster);
+        if (completedBackups.isEmpty()) {
+            throw new IllegalStateException("No completed backups available for PITR");
+        }
+
+        PitrWindow window = calculatePitrWindow(completedBackups);
+        if (!window.available()) {
+            throw new IllegalStateException("PITR is not available for this cluster yet");
+        }
+
+        Instant targetTime = request.getTargetTime();
+        if (targetTime.isBefore(window.earliest())) {
+            throw new IllegalArgumentException("Target time is before the earliest recovery time");
+        }
+        if (targetTime.isAfter(window.latest())) {
+            throw new IllegalArgumentException("Target time is after the latest recovery time");
+        }
+
+        Backup resolvedBackup = resolveBackupForTargetTime(completedBackups, targetTime);
+        if (resolvedBackup == null) {
+            throw new IllegalArgumentException("Selected target time is not recoverable from available backups");
+        }
+
+        RestoreRequest restoreRequest = RestoreRequest.builder()
+                .targetTime(targetTime)
+                .createNewCluster(true)
+                .newClusterName(request.getNewClusterName())
+                .nodeRegions(request.getNodeRegions())
+                .nodeSize(request.getNodeSize())
+                .postgresVersion(request.getPostgresVersion())
+                .build();
+
+        return createRestoreJob(sourceCluster, resolvedBackup, restoreRequest, user);
+    }
+
+    /**
+     * Initiate restore from backup to a new cluster.
      */
     @Transactional
     public RestoreJob restoreBackup(UUID clusterId, UUID backupId, RestoreRequest request, User user) {
-        // Capture IP and user-agent before async audit log
-        String clientIp = auditLogService.getCurrentRequestIp();
-        String userAgent = auditLogService.getCurrentRequestUserAgent();
-
         Cluster sourceCluster = clusterRepository.findByIdAndUser(clusterId, user)
                 .orElseThrow(() -> new IllegalArgumentException("Cluster not found"));
 
@@ -570,6 +634,14 @@ public class BackupService {
         if (!Backup.STATUS_COMPLETED.equals(backup.getStatus())) {
             throw new IllegalStateException("Cannot restore from a backup that is not completed");
         }
+
+        return createRestoreJob(sourceCluster, backup, request, user);
+    }
+
+    private RestoreJob createRestoreJob(Cluster sourceCluster, Backup backup, RestoreRequest request, User user) {
+        // Capture IP and user-agent before async audit log
+        String clientIp = auditLogService.getCurrentRequestIp();
+        String userAgent = auditLogService.getCurrentRequestUserAgent();
 
         // Check for concurrent restore jobs on the source cluster
         List<RestoreJob> pendingJobs = restoreJobRepository.findPendingJobsForCluster(sourceCluster.getId());
@@ -581,6 +653,9 @@ public class BackupService {
         Instant targetTime = request != null ? request.getTargetTime() : null;
         boolean createNewCluster = request == null || request.isCreateNewCluster(); // Default to true for safety
         String newClusterName = request != null ? request.getNewClusterName() : null;
+        String nodeSize = (request != null && request.getNodeSize() != null)
+                ? request.getNodeSize()
+                : sourceCluster.getNodeSize();
 
         // Get node regions - either from request or from source cluster's nodes
         List<String> nodeRegions = (request != null && request.getNodeRegions() != null)
@@ -588,7 +663,7 @@ public class BackupService {
                 : getNodeRegionsFromCluster(sourceCluster);
 
         // Validate node regions availability BEFORE creating cluster
-        validateNodeRegions(nodeRegions, sourceCluster.getNodeSize());
+        validateNodeRegions(nodeRegions, nodeSize);
 
         // Validate PITR target time if provided
         String restoreType = RestoreJob.TYPE_FULL;
@@ -614,11 +689,6 @@ public class BackupService {
             // Generate unique slug and credentials for new cluster
             String slug = generateUniqueSlug(newClusterName);
             String postgresPassword = PasswordGenerator.generate(24);
-
-            // Use nodeSize from request if provided, otherwise from source cluster
-            String nodeSize = (request != null && request.getNodeSize() != null)
-                    ? request.getNodeSize()
-                    : sourceCluster.getNodeSize();
 
             // Use postgresVersion from request if provided, otherwise from source cluster
             String postgresVersion = (request != null && request.getPostgresVersion() != null)
@@ -658,7 +728,7 @@ public class BackupService {
 
         restoreJob = restoreJobRepository.save(restoreJob);
         log.info("Created restore job {} for backup {} (type: {}, newCluster: {})",
-                restoreJob.getId(), backupId, restoreType, createNewCluster);
+                restoreJob.getId(), backup.getId(), restoreType, createNewCluster);
 
         // Audit log: BACKUP_RESTORE_INITIATED with source and target info
         Map<String, Object> restoreDetails = new java.util.HashMap<>();
@@ -674,7 +744,7 @@ public class BackupService {
         } else {
             restoreDetails.put("target_cluster_name", "in-place");
         }
-        auditLogService.logAsync(AuditLog.BACKUP_RESTORE_INITIATED, user, "backup", backupId,
+        auditLogService.logAsync(AuditLog.BACKUP_RESTORE_INITIATED, user, "backup", backup.getId(),
                 restoreDetails, clientIp, userAgent);
 
         // Audit log: CLUSTER_CREATED for the restored cluster (if new cluster was created)
@@ -688,7 +758,7 @@ public class BackupService {
                             "postgres_version", targetCluster.getPostgresVersion(),
                             "restored_from_cluster_id", sourceCluster.getId().toString(),
                             "restored_from_cluster_slug", sourceCluster.getSlug(),
-                            "restored_from_backup_id", backupId.toString()
+                            "restored_from_backup_id", backup.getId().toString()
                     ), clientIp, userAgent);
         }
 
@@ -696,6 +766,79 @@ public class BackupService {
         eventPublisher.publishEvent(new RestoreRequestedEvent(this, restoreJob.getId(), createNewCluster));
 
         return restoreJob;
+    }
+
+    private List<Backup> getCompletedNonDeletedBackups(Cluster cluster) {
+        return backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED)
+                .stream()
+                .filter(b -> !Backup.STATUS_DELETED.equals(b.getStatus()))
+                .toList();
+    }
+
+    private static final class PitrWindow {
+        private final Instant earliest;
+        private final Instant latest;
+
+        private PitrWindow(Instant earliest, Instant latest) {
+            this.earliest = earliest;
+            this.latest = latest;
+        }
+
+        private Instant earliest() {
+            return earliest;
+        }
+
+        private Instant latest() {
+            return latest;
+        }
+
+        private boolean available() {
+            return earliest != null && latest != null && !earliest.isAfter(latest);
+        }
+    }
+
+    private PitrWindow calculatePitrWindow(List<Backup> completedBackups) {
+        Instant earliestPitr = completedBackups.stream()
+                .map(Backup::getEarliestRecoveryTime)
+                .filter(Objects::nonNull)
+                .min(Instant::compareTo)
+                .orElse(null);
+
+        Instant latestPitr = completedBackups.stream()
+                .map(Backup::getLatestRecoveryTime)
+                .filter(Objects::nonNull)
+                .max(Instant::compareTo)
+                .orElse(null);
+
+        return new PitrWindow(earliestPitr, latestPitr);
+    }
+
+    private Backup resolveBackupForTargetTime(List<Backup> completedBackups, Instant targetTime) {
+        Comparator<Backup> byClosestPreceding = Comparator
+                .comparing(Backup::getEarliestRecoveryTime, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(Backup::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()));
+
+        Optional<Backup> containing = completedBackups.stream()
+                .filter(this::hasValidRecoveryWindow)
+                .filter(b -> !targetTime.isBefore(b.getEarliestRecoveryTime()))
+                .filter(b -> !targetTime.isAfter(b.getLatestRecoveryTime()))
+                .max(byClosestPreceding);
+
+        if (containing.isPresent()) {
+            return containing.get();
+        }
+
+        return completedBackups.stream()
+                .filter(this::hasValidRecoveryWindow)
+                .filter(b -> !targetTime.isBefore(b.getEarliestRecoveryTime()))
+                .max(byClosestPreceding)
+                .orElse(null);
+    }
+
+    private boolean hasValidRecoveryWindow(Backup backup) {
+        return backup.getEarliestRecoveryTime() != null
+                && backup.getLatestRecoveryTime() != null
+                && !backup.getEarliestRecoveryTime().isAfter(backup.getLatestRecoveryTime());
     }
 
     /**
