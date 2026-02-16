@@ -4,6 +4,7 @@ import com.pgcluster.api.event.ClusterDeleteRequestedEvent;
 import com.pgcluster.api.exception.ApiException;
 import com.pgcluster.api.model.dto.AdminStatsResponse;
 import com.pgcluster.api.model.dto.AdminUserResponse;
+import com.pgcluster.api.model.dto.ClusterHealthResponse;
 import com.pgcluster.api.model.dto.CreateUserRequest;
 import com.pgcluster.api.model.dto.ResetPasswordRequest;
 import com.pgcluster.api.model.entity.AuditLog;
@@ -695,5 +696,125 @@ class AdminServiceTest {
         request.setLastName("User");
         request.setRole("user");
         return request;
+    }
+
+    @Nested
+    @DisplayName("getClusterHealthAsAdmin")
+    class GetClusterHealthAsAdmin {
+
+        @Test
+        @DisplayName("should throw when cluster not found")
+        void shouldThrowWhenNotFound() {
+            UUID clusterId = UUID.randomUUID();
+            when(clusterRepository.findByIdWithUserAndNodes(clusterId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> adminService.getClusterHealthAsAdmin(clusterId))
+                    .isInstanceOf(ApiException.class)
+                    .satisfies(ex -> assertThat(((ApiException) ex).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+        }
+
+        @Test
+        @DisplayName("should return unavailable when cluster not running")
+        void shouldReturnUnavailableWhenNotRunning() {
+            Cluster cluster = createCluster(Cluster.STATUS_PENDING);
+            when(clusterRepository.findByIdWithUserAndNodes(cluster.getId())).thenReturn(Optional.of(cluster));
+
+            com.pgcluster.api.model.dto.ClusterHealthResponse response =
+                    adminService.getClusterHealthAsAdmin(cluster.getId());
+
+            assertThat(response.getOverallStatus()).isEqualTo("unavailable");
+        }
+
+        @Test
+        @DisplayName("should return healthy when leader found and all nodes up")
+        void shouldReturnHealthy() {
+            Cluster cluster = createCluster(Cluster.STATUS_RUNNING);
+            com.pgcluster.api.model.entity.VpsNode node1 = createNode("node-1", "10.0.0.1", "fsn1");
+            com.pgcluster.api.model.entity.VpsNode node2 = createNode("node-2", "10.0.0.2", "nbg1");
+
+            when(clusterRepository.findByIdWithUserAndNodes(cluster.getId())).thenReturn(Optional.of(cluster));
+            when(vpsNodeRepository.findByCluster(cluster)).thenReturn(List.of(node1, node2));
+            when(patroniService.getPatroniStatus(node1)).thenReturn("{\"role\":\"leader\"}");
+            when(patroniService.getPatroniStatus(node2)).thenReturn("{\"role\":\"replica\"}");
+            when(patroniService.parseRole("{\"role\":\"leader\"}")).thenReturn("leader");
+            when(patroniService.parseRole("{\"role\":\"replica\"}")).thenReturn("replica");
+            when(patroniService.getStateForRole("leader")).thenReturn("running");
+            when(patroniService.getStateForRole("replica")).thenReturn("streaming");
+
+            com.pgcluster.api.model.dto.ClusterHealthResponse response =
+                    adminService.getClusterHealthAsAdmin(cluster.getId());
+
+            assertThat(response.getOverallStatus()).isEqualTo("healthy");
+            assertThat(response.getNodes()).hasSize(2);
+        }
+
+        @Test
+        @DisplayName("should return unhealthy when no leader found")
+        void shouldReturnUnhealthy() {
+            Cluster cluster = createCluster(Cluster.STATUS_RUNNING);
+            com.pgcluster.api.model.entity.VpsNode node1 = createNode("node-1", "10.0.0.1", "fsn1");
+
+            when(clusterRepository.findByIdWithUserAndNodes(cluster.getId())).thenReturn(Optional.of(cluster));
+            when(vpsNodeRepository.findByCluster(cluster)).thenReturn(List.of(node1));
+            when(patroniService.getPatroniStatus(node1)).thenReturn("{\"role\":\"replica\"}");
+            when(patroniService.parseRole("{\"role\":\"replica\"}")).thenReturn("replica");
+            when(patroniService.getStateForRole("replica")).thenReturn("streaming");
+
+            com.pgcluster.api.model.dto.ClusterHealthResponse response =
+                    adminService.getClusterHealthAsAdmin(cluster.getId());
+
+            assertThat(response.getOverallStatus()).isEqualTo("unhealthy");
+        }
+
+        @Test
+        @DisplayName("should return degraded when leader found but a node is unreachable")
+        void shouldReturnDegraded() {
+            Cluster cluster = createCluster(Cluster.STATUS_RUNNING);
+            com.pgcluster.api.model.entity.VpsNode node1 = createNode("node-1", "10.0.0.1", "fsn1");
+            com.pgcluster.api.model.entity.VpsNode node2 = createNode("node-2", "10.0.0.2", "nbg1");
+
+            when(clusterRepository.findByIdWithUserAndNodes(cluster.getId())).thenReturn(Optional.of(cluster));
+            when(vpsNodeRepository.findByCluster(cluster)).thenReturn(List.of(node1, node2));
+            when(patroniService.getPatroniStatus(node1)).thenReturn("{\"role\":\"leader\"}");
+            when(patroniService.getPatroniStatus(node2)).thenReturn(null); // unreachable
+            when(patroniService.parseRole("{\"role\":\"leader\"}")).thenReturn("leader");
+            when(patroniService.getStateForRole("leader")).thenReturn("running");
+
+            com.pgcluster.api.model.dto.ClusterHealthResponse response =
+                    adminService.getClusterHealthAsAdmin(cluster.getId());
+
+            assertThat(response.getOverallStatus()).isEqualTo("degraded");
+        }
+
+        @Test
+        @DisplayName("should mark node unreachable when patroni throws exception")
+        void shouldMarkNodeUnreachableOnException() {
+            Cluster cluster = createCluster(Cluster.STATUS_RUNNING);
+            com.pgcluster.api.model.entity.VpsNode node1 = createNode("node-1", "10.0.0.1", "fsn1");
+            com.pgcluster.api.model.entity.VpsNode node2 = createNode("node-2", "10.0.0.2", "nbg1");
+
+            when(clusterRepository.findByIdWithUserAndNodes(cluster.getId())).thenReturn(Optional.of(cluster));
+            when(vpsNodeRepository.findByCluster(cluster)).thenReturn(List.of(node1, node2));
+            when(patroniService.getPatroniStatus(node1)).thenThrow(new RuntimeException("SSH timeout"));
+            when(patroniService.getPatroniStatus(node2)).thenReturn("{\"role\":\"leader\"}");
+            when(patroniService.parseRole("{\"role\":\"leader\"}")).thenReturn("leader");
+            when(patroniService.getStateForRole("leader")).thenReturn("running");
+
+            com.pgcluster.api.model.dto.ClusterHealthResponse response =
+                    adminService.getClusterHealthAsAdmin(cluster.getId());
+
+            assertThat(response.getNodes()).hasSize(2);
+            assertThat(response.getNodes().stream()
+                    .filter(n -> n.getName().equals("node-1"))
+                    .findFirst().orElseThrow().isReachable()).isFalse();
+        }
+
+        private com.pgcluster.api.model.entity.VpsNode createNode(String name, String ip, String location) {
+            com.pgcluster.api.model.entity.VpsNode node = new com.pgcluster.api.model.entity.VpsNode();
+            node.setName(name);
+            node.setPublicIp(ip);
+            node.setLocation(location);
+            return node;
+        }
     }
 }

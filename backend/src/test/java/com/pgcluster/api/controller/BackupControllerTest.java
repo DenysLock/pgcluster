@@ -334,31 +334,16 @@ class BackupControllerTest {
     class RestoreFromPitr {
 
         @Test
-        @DisplayName("should return 422 with nearest suggestions when target time is in PITR gap")
-        void shouldReturn422WhenTargetIsInGap() throws Exception {
-            backup.setEarliestRecoveryTime(Instant.parse("2026-02-14T12:21:05Z"));
-            backup.setLatestRecoveryTime(Instant.parse("2026-02-14T12:24:47Z"));
-            backup.setCreatedAt(Instant.parse("2026-02-14T12:24:47Z"));
+        @DisplayName("should return 422 when target time is before earliest recovery time")
+        void shouldReturn422WhenTargetBeforeEarliest() throws Exception {
+            backup.setEarliestRecoveryTime(Instant.parse("2026-02-14T12:00:00Z"));
+            backup.setLatestRecoveryTime(Instant.parse("2026-02-14T13:00:00Z"));
             backupRepository.save(backup);
 
-            Backup secondBackup = Backup.builder()
-                    .cluster(cluster)
-                    .type(Backup.TYPE_MANUAL)
-                    .status(Backup.STATUS_COMPLETED)
-                    .backupType(Backup.BACKUP_TYPE_INCR)
-                    .requestedBackupType(Backup.BACKUP_TYPE_INCR)
-                    .pgbackrestLabel("20260214-125920I")
-                    .sizeBytes(1024L * 1024L)
-                    .earliestRecoveryTime(Instant.parse("2026-02-14T12:59:20Z"))
-                    .latestRecoveryTime(Instant.parse("2026-02-14T12:59:24Z"))
-                    .createdAt(Instant.parse("2026-02-14T12:59:24Z"))
-                    .build();
-            backupRepository.save(secondBackup);
-
             Map<String, Object> requestBody = Map.of(
-                    "targetTime", "2026-02-14T12:30:00Z",
+                    "targetTime", "2026-02-14T10:00:00Z",
                     "createNewCluster", true,
-                    "newClusterName", "pitr-gap-test",
+                    "newClusterName", "pitr-before-earliest-test",
                     "nodeRegions", new String[]{"fsn1"},
                     "nodeSize", "cx23",
                     "postgresVersion", "16"
@@ -369,12 +354,9 @@ class BackupControllerTest {
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(requestBody)))
                     .andExpect(status().isUnprocessableEntity())
-                    .andExpect(jsonPath("$.code", is("PITR_TARGET_IN_GAP")))
-                    .andExpect(jsonPath("$.requestedTargetTime", is("2026-02-14T12:30:00Z")))
-                    .andExpect(jsonPath("$.nearestBefore", is("2026-02-14T12:24:47Z")))
-                    .andExpect(jsonPath("$.nearestAfter", is("2026-02-14T12:59:20Z")))
-                    .andExpect(jsonPath("$.earliestPitrTime", is("2026-02-14T12:21:05Z")))
-                    .andExpect(jsonPath("$.latestPitrTime", is("2026-02-14T12:59:24Z")));
+                    .andExpect(jsonPath("$.code", is("PITR_TARGET_BEFORE_EARLIEST")))
+                    .andExpect(jsonPath("$.requestedTargetTime", is("2026-02-14T10:00:00Z")))
+                    .andExpect(jsonPath("$.earliestPitrTime", is("2026-02-14T12:00:00Z")));
         }
     }
 }

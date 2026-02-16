@@ -327,6 +327,82 @@ class BackupServiceTest {
         }
 
         @Test
+        @DisplayName("should throw when no leader node found")
+        void shouldThrowWhenNoLeader() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+            Backup backup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            Backup otherFullBackup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByIdAndCluster(backup.getId(), cluster)).thenReturn(Optional.of(backup));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(backup, otherFullBackup));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(null);
+
+            assertThatThrownBy(() -> backupService.deleteBackup(cluster.getId(), backup.getId(), user, false))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("No leader node found");
+        }
+
+        @Test
+        @DisplayName("should throw when pgBackRest deletion fails")
+        void shouldThrowWhenPgBackRestFails() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+            Backup backup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            backup.setPgbackrestLabel("20260101-120000F");
+            Backup otherFullBackup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByIdAndCluster(backup.getId(), cluster)).thenReturn(Optional.of(backup));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(backup, otherFullBackup));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            doThrow(new RuntimeException("pgBackRest error")).when(pgBackRestService)
+                    .expireSpecificBackup(cluster, leader, "20260101-120000F");
+
+            assertThatThrownBy(() -> backupService.deleteBackup(cluster.getId(), backup.getId(), user, false))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("Failed to delete backup from storage");
+        }
+
+        @Test
+        @DisplayName("should delete backup and mark dependents as deleted when confirmed")
+        void shouldDeleteWithDependentsWhenConfirmed() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+            Instant baseTime = Instant.parse("2026-01-01T12:00:00Z");
+
+            Backup fullBackup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            fullBackup.setCreatedAt(baseTime);
+
+            Backup otherFullBackup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            otherFullBackup.setCreatedAt(baseTime.minus(1, java.time.temporal.ChronoUnit.DAYS));
+
+            Backup dependentBackup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_INCR);
+            dependentBackup.setCreatedAt(baseTime.plus(1, java.time.temporal.ChronoUnit.HOURS));
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByIdAndCluster(fullBackup.getId(), cluster)).thenReturn(Optional.of(fullBackup));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(dependentBackup, fullBackup, otherFullBackup));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            when(backupRepository.save(any(Backup.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            backupService.deleteBackup(cluster.getId(), fullBackup.getId(), user, true);
+
+            assertThat(fullBackup.getStatus()).isEqualTo(Backup.STATUS_DELETED);
+            assertThat(dependentBackup.getStatus()).isEqualTo(Backup.STATUS_DELETED);
+        }
+
+        @Test
         @DisplayName("should throw when dependents exist and not confirmed")
         void shouldThrowWhenUnconfirmedDependents() {
             User user = createTestUser();
@@ -569,8 +645,8 @@ class BackupServiceTest {
         }
 
         @Test
-        @DisplayName("should return segmented PITR window when gaps exist")
-        void shouldReturnSegmentedWindowWhenGapsExist() {
+        @DisplayName("should return continuous window spanning from earliest to latest recovery time")
+        void shouldReturnContinuousWindowAcrossMultipleBackups() {
             User user = createTestUser();
             Cluster cluster = createRunningCluster();
 
@@ -588,9 +664,12 @@ class BackupServiceTest {
 
             var window = backupService.getPitrWindow(cluster.getId(), user);
 
+            // Implementation returns a single continuous interval from earliest to latest WAL time
             assertThat(window.isAvailable()).isTrue();
-            assertThat(window.getStatus()).isEqualTo("segmented");
-            assertThat(window.getIntervals()).hasSize(2);
+            assertThat(window.getStatus()).isEqualTo("continuous");
+            assertThat(window.getIntervals()).hasSize(1);
+            assertThat(window.getEarliestPitrTime()).isEqualTo(Instant.parse("2026-01-01T10:00:00Z"));
+            assertThat(window.getLatestPitrTime()).isEqualTo(Instant.parse("2026-01-01T11:10:00Z"));
         }
 
         @Test
@@ -718,39 +797,32 @@ class BackupServiceTest {
         }
 
         @Test
-        @DisplayName("should throw when target time is in a PITR gap")
-        void shouldThrowWhenTargetTimeIsInGap() {
+        @DisplayName("should throw when target time is before earliest recovery time")
+        void shouldThrowWhenTargetBeforeEarliest() {
             User user = createTestUser();
             Cluster cluster = createRunningCluster();
 
-            Backup first = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
-            first.setEarliestRecoveryTime(Instant.parse("2026-01-01T09:00:00Z"));
-            first.setLatestRecoveryTime(Instant.parse("2026-01-01T09:30:00Z"));
-
-            Backup second = createCompletedBackup(cluster, Backup.BACKUP_TYPE_INCR);
-            second.setEarliestRecoveryTime(Instant.parse("2026-01-01T10:00:00Z"));
-            second.setLatestRecoveryTime(Instant.parse("2026-01-01T10:20:00Z"));
+            Backup backup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            backup.setEarliestRecoveryTime(Instant.parse("2026-01-01T09:00:00Z"));
+            backup.setLatestRecoveryTime(Instant.parse("2026-01-01T10:00:00Z"));
 
             PitrRestoreRequest request = PitrRestoreRequest.builder()
-                    .targetTime(Instant.parse("2026-01-01T09:45:00Z"))
+                    .targetTime(Instant.parse("2026-01-01T08:00:00Z")) // before earliest
                     .createNewCluster(true)
-                    .newClusterName("restore-gap-window")
+                    .newClusterName("restore-before-earliest")
                     .nodeRegions(List.of("fsn1"))
                     .nodeSize("cx23")
                     .build();
 
             when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
             when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
-                    .thenReturn(List.of(second, first));
+                    .thenReturn(List.of(backup));
 
             assertThatThrownBy(() -> backupService.restoreFromPitr(cluster.getId(), request, user))
                     .isInstanceOfSatisfying(PitrValidationException.class, ex -> {
-                        assertThat(ex.getCode()).isEqualTo(PitrValidationException.CODE_TARGET_IN_GAP);
-                        assertThat(ex.getRequestedTargetTime()).isEqualTo(Instant.parse("2026-01-01T09:45:00Z"));
-                        assertThat(ex.getNearestBefore()).isEqualTo(Instant.parse("2026-01-01T09:30:00Z"));
-                        assertThat(ex.getNearestAfter()).isEqualTo(Instant.parse("2026-01-01T10:00:00Z"));
+                        assertThat(ex.getCode()).isEqualTo(PitrValidationException.CODE_TARGET_BEFORE_EARLIEST);
+                        assertThat(ex.getRequestedTargetTime()).isEqualTo(Instant.parse("2026-01-01T08:00:00Z"));
                         assertThat(ex.getEarliestPitrTime()).isEqualTo(Instant.parse("2026-01-01T09:00:00Z"));
-                        assertThat(ex.getLatestPitrTime()).isEqualTo(Instant.parse("2026-01-01T10:20:00Z"));
                     });
 
             verify(restoreJobRepository, never()).save(any());
@@ -1063,6 +1135,300 @@ class BackupServiceTest {
             assertThatThrownBy(() -> backupService.deleteBackupAsAdmin(cluster, backup, false))
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("No leader node found");
+        }
+    }
+
+    @Nested
+    @DisplayName("executeBackup")
+    class ExecuteBackup {
+
+        @Test
+        @DisplayName("should execute full backup and mark as completed")
+        void shouldExecuteFullBackup() {
+            Cluster cluster = createRunningCluster();
+            Backup backup = Backup.builder()
+                    .id(UUID.randomUUID())
+                    .cluster(cluster)
+                    .status(Backup.STATUS_PENDING)
+                    .type(Backup.TYPE_MANUAL)
+                    .requestedBackupType(Backup.BACKUP_TYPE_FULL)
+                    .retentionType(Backup.RETENTION_MANUAL)
+                    .build();
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            com.pgcluster.api.model.dto.PgBackRestBackupInfo result =
+                    com.pgcluster.api.model.dto.PgBackRestBackupInfo.builder()
+                            .label("20260101-120000F")
+                            .type("full")
+                            .backupSizeBytes(1024L * 1024L)
+                            .walStartLsn("0/1000000")
+                            .walStopLsn("0/2000000")
+                            .startTime(Instant.parse("2026-01-01T12:00:00Z"))
+                            .stopTime(Instant.parse("2026-01-01T12:05:00Z"))
+                            .build();
+
+            when(backupRepository.findById(backup.getId())).thenReturn(Optional.of(backup));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            when(pgBackRestService.executeFullBackup(cluster, leader)).thenReturn(result);
+            when(backupRepository.save(any(Backup.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            backupService.executeBackup(backup.getId());
+
+            assertThat(backup.getStatus()).isEqualTo(Backup.STATUS_COMPLETED);
+            assertThat(backup.getPgbackrestLabel()).isEqualTo("20260101-120000F");
+            assertThat(backup.getBackupType()).isEqualTo(Backup.BACKUP_TYPE_FULL);
+            assertThat(backup.getSizeBytes()).isEqualTo(1024L * 1024L);
+            assertThat(backup.getProgressPercent()).isEqualTo(100);
+        }
+
+        @Test
+        @DisplayName("should execute incremental backup for scheduled daily")
+        void shouldExecuteIncrementalForDaily() {
+            Cluster cluster = createRunningCluster();
+            Backup backup = Backup.builder()
+                    .id(UUID.randomUUID())
+                    .cluster(cluster)
+                    .status(Backup.STATUS_PENDING)
+                    .type(Backup.TYPE_SCHEDULED_DAILY)
+                    .retentionType(Backup.RETENTION_DAILY)
+                    .build();
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            com.pgcluster.api.model.dto.PgBackRestBackupInfo result =
+                    com.pgcluster.api.model.dto.PgBackRestBackupInfo.builder()
+                            .label("20260101-020000D")
+                            .type("diff")
+                            .backupSizeBytes(512L * 1024L)
+                            .build();
+
+            when(backupRepository.findById(backup.getId())).thenReturn(Optional.of(backup));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            when(pgBackRestService.executeDifferentialBackup(cluster, leader)).thenReturn(result);
+            when(backupRepository.save(any(Backup.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            backupService.executeBackup(backup.getId());
+
+            verify(pgBackRestService).executeDifferentialBackup(cluster, leader);
+            assertThat(backup.getStatus()).isEqualTo(Backup.STATUS_COMPLETED);
+        }
+
+        @Test
+        @DisplayName("should execute full backup for scheduled weekly")
+        void shouldExecuteFullForWeekly() {
+            Cluster cluster = createRunningCluster();
+            Backup backup = Backup.builder()
+                    .id(UUID.randomUUID())
+                    .cluster(cluster)
+                    .status(Backup.STATUS_PENDING)
+                    .type(Backup.TYPE_SCHEDULED_WEEKLY)
+                    .retentionType(Backup.RETENTION_WEEKLY)
+                    .build();
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            com.pgcluster.api.model.dto.PgBackRestBackupInfo result =
+                    com.pgcluster.api.model.dto.PgBackRestBackupInfo.builder()
+                            .label("20260101-030000F")
+                            .type("full")
+                            .backupSizeBytes(2048L * 1024L)
+                            .build();
+
+            when(backupRepository.findById(backup.getId())).thenReturn(Optional.of(backup));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            when(pgBackRestService.executeFullBackup(cluster, leader)).thenReturn(result);
+            when(backupRepository.save(any(Backup.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            backupService.executeBackup(backup.getId());
+
+            verify(pgBackRestService).executeFullBackup(cluster, leader);
+        }
+
+        @Test
+        @DisplayName("should mark backup as failed when no leader node found")
+        void shouldMarkFailedWhenNoLeader() {
+            Cluster cluster = createRunningCluster();
+            Backup backup = Backup.builder()
+                    .id(UUID.randomUUID())
+                    .cluster(cluster)
+                    .status(Backup.STATUS_PENDING)
+                    .type(Backup.TYPE_MANUAL)
+                    .requestedBackupType(Backup.BACKUP_TYPE_INCR)
+                    .build();
+
+            when(backupRepository.findById(backup.getId())).thenReturn(Optional.of(backup));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(null);
+            when(backupRepository.save(any(Backup.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                    () -> backupService.executeBackup(backup.getId()));
+
+            assertThat(backup.getStatus()).isEqualTo(Backup.STATUS_FAILED);
+        }
+
+        @Test
+        @DisplayName("should throw when backup not found")
+        void shouldThrowWhenBackupNotFound() {
+            UUID backupId = UUID.randomUUID();
+            when(backupRepository.findById(backupId)).thenReturn(Optional.empty());
+
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                    () -> backupService.executeBackup(backupId));
+        }
+    }
+
+    @Nested
+    @DisplayName("restoreBackup")
+    class RestoreBackup {
+
+        @Test
+        @DisplayName("should create restore job for completed backup")
+        void shouldCreateRestoreJob() {
+            User user = createTestUser();
+            Cluster sourceCluster = createRunningCluster();
+            sourceCluster.setRegion("fsn1");
+            sourceCluster.setNodeRegions(List.of("fsn1"));
+
+            Backup backup = createCompletedBackup(sourceCluster, Backup.BACKUP_TYPE_FULL);
+
+            com.pgcluster.api.model.dto.RestoreRequest request =
+                    com.pgcluster.api.model.dto.RestoreRequest.builder()
+                            .createNewCluster(true)
+                            .newClusterName("my-restored-cluster")
+                            .nodeRegions(List.of("fsn1"))
+                            .nodeSize("cx23")
+                            .postgresVersion("16")
+                            .build();
+
+            when(clusterRepository.findByIdAndUser(sourceCluster.getId(), user)).thenReturn(Optional.of(sourceCluster));
+            when(backupRepository.findByIdAndCluster(backup.getId(), sourceCluster)).thenReturn(Optional.of(backup));
+            when(restoreJobRepository.findPendingJobsForCluster(sourceCluster.getId())).thenReturn(List.of());
+            when(hetznerClient.getAvailableLocationsForServerType("cx23")).thenReturn(java.util.Set.of("fsn1"));
+
+            when(clusterRepository.save(any(Cluster.class))).thenAnswer(inv -> {
+                Cluster c = inv.getArgument(0);
+                if (c.getId() == null) c.setId(UUID.randomUUID());
+                return c;
+            });
+            when(restoreJobRepository.save(any(RestoreJob.class))).thenAnswer(inv -> {
+                RestoreJob j = inv.getArgument(0);
+                if (j.getId() == null) j.setId(UUID.randomUUID());
+                return j;
+            });
+
+            RestoreJob job = backupService.restoreBackup(sourceCluster.getId(), backup.getId(), request, user);
+
+            assertThat(job.getRestoreType()).isEqualTo(RestoreJob.TYPE_FULL);
+            assertThat(job.getTargetCluster()).isNotNull();
+            assertThat(job.getStatus()).isEqualTo(RestoreJob.STATUS_PENDING);
+            verify(eventPublisher).publishEvent(any());
+        }
+
+        @Test
+        @DisplayName("should throw when backup is not completed")
+        void shouldThrowWhenBackupNotCompleted() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+            Backup backup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            backup.setStatus(Backup.STATUS_IN_PROGRESS);
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByIdAndCluster(backup.getId(), cluster)).thenReturn(Optional.of(backup));
+
+            com.pgcluster.api.model.dto.RestoreRequest request =
+                    com.pgcluster.api.model.dto.RestoreRequest.builder().build();
+
+            assertThatThrownBy(() -> backupService.restoreBackup(cluster.getId(), backup.getId(), request, user))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("not completed");
+        }
+
+        @Test
+        @DisplayName("should throw when cluster not found")
+        void shouldThrowWhenClusterNotFound() {
+            User user = createTestUser();
+            UUID clusterId = UUID.randomUUID();
+            UUID backupId = UUID.randomUUID();
+
+            when(clusterRepository.findByIdAndUser(clusterId, user)).thenReturn(Optional.empty());
+
+            com.pgcluster.api.model.dto.RestoreRequest request =
+                    com.pgcluster.api.model.dto.RestoreRequest.builder().build();
+
+            assertThatThrownBy(() -> backupService.restoreBackup(clusterId, backupId, request, user))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Nested
+    @DisplayName("restoreFromPitr - in-place restore rejected")
+    class RestoreFromPitrInPlace {
+
+        @Test
+        @DisplayName("should throw when createNewCluster is false")
+        void shouldThrowWhenInPlace() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+
+            com.pgcluster.api.model.dto.PitrRestoreRequest request =
+                    com.pgcluster.api.model.dto.PitrRestoreRequest.builder()
+                            .targetTime(Instant.now())
+                            .createNewCluster(false)
+                            .build();
+
+            assertThatThrownBy(() -> backupService.restoreFromPitr(cluster.getId(), request, user))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("new cluster");
+        }
+
+        @Test
+        @DisplayName("should throw when no completed backups available")
+        void shouldThrowWhenNoBackups() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+
+            com.pgcluster.api.model.dto.PitrRestoreRequest request =
+                    com.pgcluster.api.model.dto.PitrRestoreRequest.builder()
+                            .targetTime(Instant.now())
+                            .createNewCluster(true)
+                            .build();
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of());
+
+            assertThatThrownBy(() -> backupService.restoreFromPitr(cluster.getId(), request, user))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("No completed backups");
+        }
+
+        @Test
+        @DisplayName("should throw when target time is null")
+        void shouldThrowWhenTargetTimeNull() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+
+            Backup backup = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            backup.setEarliestRecoveryTime(Instant.parse("2026-01-01T09:00:00Z"));
+            backup.setLatestRecoveryTime(Instant.parse("2026-01-01T12:00:00Z"));
+
+            com.pgcluster.api.model.dto.PitrRestoreRequest request =
+                    com.pgcluster.api.model.dto.PitrRestoreRequest.builder()
+                            .targetTime(null)
+                            .createNewCluster(true)
+                            .build();
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(backup));
+
+            assertThatThrownBy(() -> backupService.restoreFromPitr(cluster.getId(), request, user))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Target time is required");
         }
     }
 

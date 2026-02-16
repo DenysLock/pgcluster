@@ -5,8 +5,10 @@ import com.pgcluster.api.model.entity.AuditLog;
 import com.pgcluster.api.model.entity.Cluster;
 import com.pgcluster.api.model.entity.Export;
 import com.pgcluster.api.model.entity.User;
+import com.pgcluster.api.model.entity.VpsNode;
 import com.pgcluster.api.repository.ClusterRepository;
 import com.pgcluster.api.repository.ExportRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -489,6 +491,159 @@ class ExportServiceTest {
             verify(spyService, atMost(2)).executeExport(exportId);
             // Clear interrupted status
             Thread.interrupted();
+        }
+    }
+
+    @Nested
+    @DisplayName("executeExport")
+    class ExecuteExport {
+
+        @BeforeEach
+        void setUpFields() {
+            ReflectionTestUtils.setField(exportService, "exportTimeoutMs", 5000);
+            ReflectionTestUtils.setField(exportService, "downloadExpiryHours", 24);
+        }
+
+        @Test
+        @DisplayName("should throw when export not found")
+        void shouldThrowWhenNotFound() {
+            UUID exportId = UUID.randomUUID();
+            when(exportRepository.findById(exportId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> exportService.executeExport(exportId))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Export not found");
+        }
+
+        @Test
+        @DisplayName("should mark failed and throw when no leader node found")
+        void shouldMarkFailedWhenNoLeader() {
+            UUID exportId = UUID.randomUUID();
+            Cluster cluster = createRunningCluster();
+            Export export = createExport(Export.STATUS_PENDING);
+            export.setCluster(cluster);
+
+            when(exportRepository.findById(exportId)).thenReturn(Optional.of(export));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(null);
+            when(exportRepository.save(any(Export.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            assertThatThrownBy(() -> exportService.executeExport(exportId))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("No leader node found");
+
+            assertThat(export.getStatus()).isEqualTo(Export.STATUS_FAILED);
+        }
+
+        @Test
+        @DisplayName("should mark failed and throw when pg_dump fails")
+        void shouldMarkFailedWhenPgDumpFails() {
+            UUID exportId = UUID.randomUUID();
+            Cluster cluster = createRunningCluster();
+            Export export = createExport(Export.STATUS_PENDING);
+            export.setCluster(cluster);
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            when(exportRepository.findById(exportId)).thenReturn(Optional.of(export));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            when(sshService.executeCommand(anyString(), anyString(), anyInt()))
+                    .thenReturn(new SshService.CommandResult(1, "", "pg_dump: connection refused"));
+            when(exportRepository.save(any(Export.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            assertThatThrownBy(() -> exportService.executeExport(exportId))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("pg_dump failed");
+
+            assertThat(export.getStatus()).isEqualTo(Export.STATUS_FAILED);
+        }
+
+        @Test
+        @DisplayName("should mark failed when S3 upload fails")
+        void shouldMarkFailedWhenUploadFails() {
+            UUID exportId = UUID.randomUUID();
+            Cluster cluster = createRunningCluster();
+            Export export = createExport(Export.STATUS_PENDING);
+            export.setCluster(cluster);
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            when(exportRepository.findById(exportId)).thenReturn(Optional.of(export));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            // pg_dump succeeds, size check succeeds, upload fails
+            when(sshService.executeCommand(anyString(), anyString(), anyInt()))
+                    .thenReturn(new SshService.CommandResult(0, "", ""))          // pg_dump
+                    .thenReturn(new SshService.CommandResult(0, "1048576", ""))   // wc -c size
+                    .thenReturn(new SshService.CommandResult(1, "", "upload error")); // curl upload
+            when(s3StorageService.generatePresignedPutUrl(anyString(), anyInt()))
+                    .thenReturn("https://s3.example.com/put-url");
+            when(exportRepository.save(any(Export.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            assertThatThrownBy(() -> exportService.executeExport(exportId))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("Failed to upload export to S3");
+
+            assertThat(export.getStatus()).isEqualTo(Export.STATUS_FAILED);
+        }
+
+        @Test
+        @DisplayName("should complete successfully when all steps pass")
+        void shouldCompleteSuccessfully() {
+            UUID exportId = UUID.randomUUID();
+            Cluster cluster = createRunningCluster();
+            Export export = createExport(Export.STATUS_PENDING);
+            export.setCluster(cluster);
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            when(exportRepository.findById(exportId)).thenReturn(Optional.of(export));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            when(sshService.executeCommand(anyString(), anyString(), anyInt()))
+                    .thenReturn(new SshService.CommandResult(0, "", ""))          // pg_dump
+                    .thenReturn(new SshService.CommandResult(0, "2097152", ""))   // wc -c size
+                    .thenReturn(new SshService.CommandResult(0, "", ""))          // curl upload
+                    .thenReturn(new SshService.CommandResult(0, "", ""));         // rm cleanup
+            when(s3StorageService.generatePresignedPutUrl(anyString(), anyInt()))
+                    .thenReturn("https://s3.example.com/put-url");
+            when(s3StorageService.getFileSize(anyString())).thenReturn(2097152L);
+            when(s3StorageService.generatePresignedUrl(anyString(), anyInt()))
+                    .thenReturn("https://s3.example.com/download-url");
+            when(exportRepository.save(any(Export.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            exportService.executeExport(exportId);
+
+            assertThat(export.getStatus()).isEqualTo(Export.STATUS_COMPLETED);
+            assertThat(export.getDownloadUrl()).isEqualTo("https://s3.example.com/download-url");
+            assertThat(export.getSizeBytes()).isEqualTo(2097152L);
+            assertThat(export.getCompletedAt()).isNotNull();
+        }
+
+        @Test
+        @DisplayName("should mark failed when file size is zero after dump")
+        void shouldMarkFailedWhenFileSizeIsZero() {
+            UUID exportId = UUID.randomUUID();
+            Cluster cluster = createRunningCluster();
+            Export export = createExport(Export.STATUS_PENDING);
+            export.setCluster(cluster);
+
+            VpsNode leader = new VpsNode();
+            leader.setPublicIp("10.0.0.1");
+
+            when(exportRepository.findById(exportId)).thenReturn(Optional.of(export));
+            when(patroniService.findLeaderNode(cluster)).thenReturn(leader);
+            when(sshService.executeCommand(anyString(), anyString(), anyInt()))
+                    .thenReturn(new SshService.CommandResult(0, "", ""))   // pg_dump success
+                    .thenReturn(new SshService.CommandResult(0, "0", "")) // wc -c returns 0
+                    .thenReturn(new SshService.CommandResult(0, "No error log found", "")); // cat error log
+            when(exportRepository.save(any(Export.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            assertThatThrownBy(() -> exportService.executeExport(exportId))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessageContaining("Export file is empty");
+
+            assertThat(export.getStatus()).isEqualTo(Export.STATUS_FAILED);
         }
     }
 

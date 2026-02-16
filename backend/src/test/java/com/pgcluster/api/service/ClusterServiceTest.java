@@ -552,6 +552,125 @@ class ClusterServiceTest {
     }
 
     @Nested
+    @DisplayName("getClusterHealth")
+    class GetClusterHealth {
+
+        @Test
+        @DisplayName("should return unavailable when cluster is not running")
+        void shouldReturnUnavailableWhenNotRunning() {
+            User user = createTestUser();
+            Cluster cluster = createCluster(Cluster.STATUS_PENDING);
+
+            when(clusterRepository.findByIdAndUserWithNodes(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+
+            var health = clusterService.getClusterHealth(cluster.getId(), user);
+
+            assertThat(health.getOverallStatus()).isEqualTo("unavailable");
+        }
+
+        @Test
+        @DisplayName("should return healthy when all nodes reachable and leader found")
+        void shouldReturnHealthy() {
+            User user = createTestUser();
+            Cluster cluster = createCluster(Cluster.STATUS_RUNNING);
+            VpsNode node = new VpsNode();
+            node.setName("node-1");
+            node.setPublicIp("10.0.0.1");
+            node.setLocation("fsn1");
+
+            when(clusterRepository.findByIdAndUserWithNodes(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(vpsNodeRepository.findByCluster(cluster)).thenReturn(List.of(node));
+            when(patroniService.getPatroniStatus(node)).thenReturn("{\"role\": \"master\"}");
+            when(patroniService.parseRole("{\"role\": \"master\"}")).thenReturn("leader");
+            when(patroniService.getStateForRole("leader")).thenReturn("running");
+
+            var health = clusterService.getClusterHealth(cluster.getId(), user);
+
+            assertThat(health.getOverallStatus()).isEqualTo("healthy");
+            assertThat(health.getPatroni().getLeader()).isEqualTo("10.0.0.1");
+        }
+
+        @Test
+        @DisplayName("should return degraded when leader found but some nodes unreachable")
+        void shouldReturnDegraded() {
+            User user = createTestUser();
+            Cluster cluster = createCluster(Cluster.STATUS_RUNNING);
+            VpsNode leader = new VpsNode();
+            leader.setName("node-1");
+            leader.setPublicIp("10.0.0.1");
+            leader.setLocation("fsn1");
+            VpsNode replica = new VpsNode();
+            replica.setName("node-2");
+            replica.setPublicIp("10.0.0.2");
+            replica.setLocation("nbg1");
+
+            when(clusterRepository.findByIdAndUserWithNodes(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(vpsNodeRepository.findByCluster(cluster)).thenReturn(List.of(leader, replica));
+            when(patroniService.getPatroniStatus(leader)).thenReturn("{\"role\": \"master\"}");
+            when(patroniService.getPatroniStatus(replica)).thenReturn(null); // unreachable
+            when(patroniService.parseRole("{\"role\": \"master\"}")).thenReturn("leader");
+            when(patroniService.getStateForRole("leader")).thenReturn("running");
+
+            var health = clusterService.getClusterHealth(cluster.getId(), user);
+
+            assertThat(health.getOverallStatus()).isEqualTo("degraded");
+        }
+
+        @Test
+        @DisplayName("should return unhealthy when no leader found")
+        void shouldReturnUnhealthy() {
+            User user = createTestUser();
+            Cluster cluster = createCluster(Cluster.STATUS_RUNNING);
+            VpsNode node = new VpsNode();
+            node.setName("node-1");
+            node.setPublicIp("10.0.0.1");
+            node.setLocation("fsn1");
+
+            when(clusterRepository.findByIdAndUserWithNodes(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(vpsNodeRepository.findByCluster(cluster)).thenReturn(List.of(node));
+            when(patroniService.getPatroniStatus(node)).thenReturn(null);
+
+            var health = clusterService.getClusterHealth(cluster.getId(), user);
+
+            assertThat(health.getOverallStatus()).isEqualTo("unhealthy");
+        }
+
+        @Test
+        @DisplayName("should handle exception from Patroni and mark node as unreachable")
+        void shouldHandlePatroniException() {
+            User user = createTestUser();
+            Cluster cluster = createCluster(Cluster.STATUS_RUNNING);
+            VpsNode node = new VpsNode();
+            node.setName("node-1");
+            node.setPublicIp("10.0.0.1");
+            node.setLocation("fsn1");
+
+            when(clusterRepository.findByIdAndUserWithNodes(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(vpsNodeRepository.findByCluster(cluster)).thenReturn(List.of(node));
+            when(patroniService.getPatroniStatus(node)).thenThrow(new RuntimeException("SSH failed"));
+
+            var health = clusterService.getClusterHealth(cluster.getId(), user);
+
+            assertThat(health.getOverallStatus()).isEqualTo("unhealthy");
+            assertThat(health.getNodes()).hasSize(1);
+            assertThat(health.getNodes().get(0).isReachable()).isFalse();
+        }
+
+        @Test
+        @DisplayName("should throw NOT_FOUND when cluster not found")
+        void shouldThrowWhenNotFound() {
+            User user = createTestUser();
+            UUID unknownId = UUID.randomUUID();
+
+            when(clusterRepository.findByIdAndUserWithNodes(unknownId, user)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> clusterService.getClusterHealth(unknownId, user))
+                    .isInstanceOf(ApiException.class)
+                    .satisfies(ex -> assertThat(((ApiException) ex).getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+        }
+    }
+
+    @Nested
     @DisplayName("getAvailableLocations (no-arg)")
     class GetAvailableLocationsNoArg {
 

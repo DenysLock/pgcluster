@@ -369,6 +369,27 @@ class AdminControllerTest {
     // These are tested via AdminServiceTest (unit) and manually against PostgreSQL.
 
     @Nested
+    @DisplayName("DELETE /api/v1/admin/clusters/{id}/backups/{backupId}")
+    class DeleteClusterBackup {
+
+        @Test
+        @DisplayName("should return 404 for non-existent backup")
+        void shouldReturn404ForNonExistentBackup() throws Exception {
+            mockMvc.perform(delete("/api/v1/admin/clusters/" + cluster.getId() + "/backups/" + UUID.randomUUID())
+                            .header("Authorization", "Bearer " + adminToken))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        @DisplayName("should return 404 for non-existent cluster")
+        void shouldReturn404ForNonExistentCluster() throws Exception {
+            mockMvc.perform(delete("/api/v1/admin/clusters/" + UUID.randomUUID() + "/backups/" + UUID.randomUUID())
+                            .header("Authorization", "Bearer " + adminToken))
+                    .andExpect(status().isNotFound());
+        }
+    }
+
+    @Nested
     @DisplayName("GET /api/v1/admin/clusters/{id}/credentials")
     class GetClusterCredentials {
 

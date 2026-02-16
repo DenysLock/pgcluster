@@ -11,6 +11,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -123,5 +124,53 @@ class GlobalExceptionHandlerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
         assertThat(response.getBody()).containsEntry("message", "An unexpected error occurred");
+    }
+
+    @Test
+    @DisplayName("should handle PitrValidationException as UNPROCESSABLE_ENTITY with all fields")
+    void shouldHandlePitrValidationException() {
+        Instant targetTime = Instant.parse("2026-01-01T08:00:00Z");
+        Instant earliest = Instant.parse("2026-01-01T09:00:00Z");
+        Instant latest = Instant.parse("2026-01-01T12:00:00Z");
+
+        PitrValidationException ex = new PitrValidationException(
+                "Target time is before earliest",
+                PitrValidationException.CODE_TARGET_BEFORE_EARLIEST,
+                targetTime,
+                null,
+                earliest,
+                earliest,
+                latest
+        );
+
+        ResponseEntity<Map<String, Object>> response = handler.handlePitrValidationException(ex);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(response.getBody()).containsEntry("status", 422);
+        assertThat(response.getBody()).containsEntry("code", PitrValidationException.CODE_TARGET_BEFORE_EARLIEST);
+        assertThat(response.getBody()).containsEntry("message", "Target time is before earliest");
+        assertThat(response.getBody()).containsEntry("requestedTargetTime", targetTime.toString());
+        assertThat(response.getBody()).containsEntry("nearestBefore", null);
+        assertThat(response.getBody()).containsEntry("nearestAfter", earliest.toString());
+        assertThat(response.getBody()).containsEntry("earliestPitrTime", earliest.toString());
+        assertThat(response.getBody()).containsEntry("latestPitrTime", latest.toString());
+        assertThat(response.getBody()).containsKey("timestamp");
+    }
+
+    @Test
+    @DisplayName("should handle PitrValidationException with null timestamps as null values")
+    void shouldHandlePitrValidationExceptionNullTimes() {
+        PitrValidationException ex = new PitrValidationException(
+                "PITR not available",
+                PitrValidationException.CODE_TARGET_NOT_RECOVERABLE,
+                null, null, null, null, null
+        );
+
+        ResponseEntity<Map<String, Object>> response = handler.handlePitrValidationException(ex);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+        assertThat(response.getBody()).containsEntry("requestedTargetTime", null);
+        assertThat(response.getBody()).containsEntry("nearestBefore", null);
+        assertThat(response.getBody()).containsEntry("nearestAfter", null);
     }
 }
