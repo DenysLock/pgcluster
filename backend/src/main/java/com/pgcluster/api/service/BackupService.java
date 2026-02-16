@@ -2,6 +2,7 @@ package com.pgcluster.api.service;
 
 import com.pgcluster.api.client.HetznerClient;
 import com.pgcluster.api.exception.ApiException;
+import com.pgcluster.api.exception.PitrValidationException;
 import com.pgcluster.api.model.dto.PgBackRestBackupInfo;
 import com.pgcluster.api.model.dto.PitrRestoreRequest;
 import com.pgcluster.api.model.dto.PitrWindowResponse;
@@ -60,6 +61,7 @@ public class BackupService {
     private final PgBackRestService pgBackRestService;
     private final ProvisioningService provisioningService;
     private final PatroniService patroniService;
+    private final SshService sshService;
     private final HetznerClient hetznerClient;
     private final ApplicationEventPublisher eventPublisher;
     private final AuditLogService auditLogService;
@@ -563,12 +565,16 @@ public class BackupService {
                 .orElseThrow(() -> new IllegalArgumentException("Cluster not found"));
 
         List<Backup> completedBackups = getCompletedNonDeletedBackups(cluster);
-        PitrWindow window = calculatePitrWindow(completedBackups);
+        PitrWindow window = calculatePitrWindow(cluster, completedBackups);
 
         return PitrWindowResponse.builder()
                 .available(window.available())
                 .earliestPitrTime(window.earliest())
                 .latestPitrTime(window.latest())
+                .intervals(window.toResponseIntervals())
+                .status(window.status())
+                .unavailableReason(window.unavailableReason())
+                .asOf(Instant.now())
                 .build();
     }
 
@@ -590,22 +596,57 @@ public class BackupService {
             throw new IllegalStateException("No completed backups available for PITR");
         }
 
-        PitrWindow window = calculatePitrWindow(completedBackups);
+        PitrWindow window = calculatePitrWindow(sourceCluster, completedBackups);
         if (!window.available()) {
             throw new IllegalStateException("PITR is not available for this cluster yet");
         }
 
         Instant targetTime = request.getTargetTime();
+        if (targetTime == null) {
+            throw new IllegalArgumentException("Target time is required for PITR");
+        }
+
         if (targetTime.isBefore(window.earliest())) {
-            throw new IllegalArgumentException("Target time is before the earliest recovery time");
+            throw buildPitrValidationException(
+                    "Target time is before the earliest recovery time",
+                    PitrValidationException.CODE_TARGET_BEFORE_EARLIEST,
+                    targetTime,
+                    null,
+                    window.earliest(),
+                    window
+            );
         }
         if (targetTime.isAfter(window.latest())) {
-            throw new IllegalArgumentException("Target time is after the latest recovery time");
+            throw buildPitrValidationException(
+                    "Target time is after the latest recovery time",
+                    PitrValidationException.CODE_TARGET_AFTER_LATEST,
+                    targetTime,
+                    window.latest(),
+                    null,
+                    window
+            );
+        }
+        if (!window.contains(targetTime)) {
+            throw buildPitrValidationException(
+                    "Selected target time is in a PITR gap and not currently recoverable",
+                    PitrValidationException.CODE_TARGET_IN_GAP,
+                    targetTime,
+                    window.nearestBefore(targetTime),
+                    window.nearestAfter(targetTime),
+                    window
+            );
         }
 
         Backup resolvedBackup = resolveBackupForTargetTime(completedBackups, targetTime);
         if (resolvedBackup == null) {
-            throw new IllegalArgumentException("Selected target time is not recoverable from available backups");
+            throw buildPitrValidationException(
+                    "Selected target time is not recoverable from available PITR intervals",
+                    PitrValidationException.CODE_TARGET_NOT_RECOVERABLE,
+                    targetTime,
+                    window.nearestBefore(targetTime),
+                    window.nearestAfter(targetTime),
+                    window
+            );
         }
 
         RestoreRequest restoreRequest = RestoreRequest.builder()
@@ -618,6 +659,25 @@ public class BackupService {
                 .build();
 
         return createRestoreJob(sourceCluster, resolvedBackup, restoreRequest, user);
+    }
+
+    private PitrValidationException buildPitrValidationException(
+            String message,
+            String code,
+            Instant targetTime,
+            Instant nearestBefore,
+            Instant nearestAfter,
+            PitrWindow window
+    ) {
+        return new PitrValidationException(
+                message,
+                code,
+                targetTime,
+                nearestBefore,
+                nearestAfter,
+                window.earliest(),
+                window.latest()
+        );
     }
 
     /**
@@ -671,7 +731,9 @@ public class BackupService {
             if (backup.getEarliestRecoveryTime() != null && targetTime.isBefore(backup.getEarliestRecoveryTime())) {
                 throw new IllegalArgumentException("Target time is before the earliest recovery time");
             }
-            if (backup.getLatestRecoveryTime() != null && targetTime.isAfter(backup.getLatestRecoveryTime())) {
+            // Upper-bound PITR is limited by archived WAL (not by backup runtime).
+            Instant latestWalArchivedTime = getLastArchivedWalTimeUtc(sourceCluster);
+            if (latestWalArchivedTime != null && targetTime.isAfter(latestWalArchivedTime)) {
                 throw new IllegalArgumentException("Target time is after the latest recovery time");
             }
             restoreType = RestoreJob.TYPE_PITR;
@@ -775,42 +837,178 @@ public class BackupService {
                 .toList();
     }
 
-    private static final class PitrWindow {
-        private final Instant earliest;
-        private final Instant latest;
+    private static final long PITR_MERGE_GAP_SECONDS = 1L;
 
-        private PitrWindow(Instant earliest, Instant latest) {
-            this.earliest = earliest;
-            this.latest = latest;
+    private static final class PitrInterval {
+        private final Instant start;
+        private final Instant end;
+
+        private PitrInterval(Instant start, Instant end) {
+            this.start = start;
+            this.end = end;
         }
 
-        private Instant earliest() {
-            return earliest;
+        private Instant start() {
+            return start;
         }
 
-        private Instant latest() {
-            return latest;
+        private Instant end() {
+            return end;
         }
 
-        private boolean available() {
-            return earliest != null && latest != null && !earliest.isAfter(latest);
+        private boolean contains(Instant target) {
+            return !target.isBefore(start) && !target.isAfter(end);
         }
     }
 
-    private PitrWindow calculatePitrWindow(List<Backup> completedBackups) {
-        Instant earliestPitr = completedBackups.stream()
+    private static final class PitrWindow {
+        private final List<PitrInterval> intervals;
+        private final String status;
+        private final String unavailableReason;
+
+        private PitrWindow(List<PitrInterval> intervals, String status, String unavailableReason) {
+            this.intervals = List.copyOf(intervals);
+            this.status = status;
+            this.unavailableReason = unavailableReason;
+        }
+
+        private Instant earliest() {
+            if (intervals.isEmpty()) {
+                return null;
+            }
+            return intervals.get(0).start();
+        }
+
+        private Instant latest() {
+            if (intervals.isEmpty()) {
+                return null;
+            }
+            return intervals.get(intervals.size() - 1).end();
+        }
+
+        private boolean available() {
+            return !intervals.isEmpty();
+        }
+
+        private String status() {
+            return status;
+        }
+
+        private String unavailableReason() {
+            return unavailableReason;
+        }
+
+        private boolean contains(Instant target) {
+            return intervals.stream().anyMatch(interval -> interval.contains(target));
+        }
+
+        private Instant nearestBefore(Instant target) {
+            return intervals.stream()
+                    .map(PitrInterval::end)
+                    .filter(end -> !end.isAfter(target))
+                    .max(Instant::compareTo)
+                    .orElse(null);
+        }
+
+        private Instant nearestAfter(Instant target) {
+            return intervals.stream()
+                    .map(PitrInterval::start)
+                    .filter(start -> !start.isBefore(target))
+                    .min(Instant::compareTo)
+                    .orElse(null);
+        }
+
+        private List<PitrWindowResponse.PitrInterval> toResponseIntervals() {
+            return intervals.stream()
+                    .map(interval -> PitrWindowResponse.PitrInterval.builder()
+                            .startTime(interval.start())
+                            .endTime(interval.end())
+                            .build())
+                    .toList();
+        }
+    }
+
+    private Instant getLastArchivedWalTimeUtc(Cluster cluster) {
+        if (cluster == null) {
+            return null;
+        }
+
+        VpsNode leader = patroniService.findLeaderNode(cluster);
+        if (leader == null || leader.getPublicIp() == null || leader.getPublicIp().isBlank()) {
+            return null;
+        }
+
+        // last_archived_time is the time when the last WAL segment finished archiving (conservative latest PITR time).
+        String command = "docker exec patroni psql -U postgres -At -c " +
+                "\"SELECT (extract(epoch from last_archived_time) * 1000)::bigint FROM pg_stat_archiver;\"";
+
+        SshService.CommandResult result = sshService.executeCommand(leader.getPublicIp(), command, 10000);
+        if (result == null || !result.isSuccess()) {
+            log.warn("Failed to query pg_stat_archiver on leader {}: {}", leader.getPublicIp(),
+                    result != null ? result.getStderr() : "unknown");
+            return null;
+        }
+
+        String stdout = result.getStdout() != null ? result.getStdout().trim() : "";
+        if (stdout.isBlank()) {
+            return null;
+        }
+
+        try {
+            long epochMillis = Long.parseLong(stdout.split("\\s+")[0]);
+            return Instant.ofEpochMilli(epochMillis);
+        } catch (NumberFormatException e) {
+            log.warn("Unexpected pg_stat_archiver output on leader {}: '{}'", leader.getPublicIp(), stdout);
+            return null;
+        }
+    }
+
+    private PitrWindow calculatePitrWindow(Cluster cluster, List<Backup> completedBackups) {
+        // Earliest time you can recover to is bounded by the oldest retained base backup.
+        Instant earliestBackupTime = completedBackups.stream()
                 .map(Backup::getEarliestRecoveryTime)
                 .filter(Objects::nonNull)
                 .min(Instant::compareTo)
                 .orElse(null);
 
-        Instant latestPitr = completedBackups.stream()
-                .map(Backup::getLatestRecoveryTime)
-                .filter(Objects::nonNull)
-                .max(Instant::compareTo)
-                .orElse(null);
+        if (earliestBackupTime == null) {
+            return new PitrWindow(List.of(), "unavailable",
+                    "No completed backups with PITR base timestamp are available yet.");
+        }
 
-        return new PitrWindow(earliestPitr, latestPitr);
+        // Latest time you can recover to is bounded by archived WAL, not by backup runtime.
+        Instant latestWalArchivedTime = getLastArchivedWalTimeUtc(cluster);
+
+        // Fallback: if WAL archive state can't be queried, at least allow up to the newest backup stop time.
+        if (latestWalArchivedTime == null) {
+            latestWalArchivedTime = completedBackups.stream()
+                    .map(Backup::getLatestRecoveryTime)
+                    .filter(Objects::nonNull)
+                    .max(Instant::compareTo)
+                    .orElse(null);
+        }
+
+        if (latestWalArchivedTime == null) {
+            return new PitrWindow(List.of(), "unavailable",
+                    "WAL archiving state is not available yet. Create a backup and ensure WAL archiving is enabled.");
+        }
+
+        // Guard against clock/reporting issues.
+        Instant now = Instant.now();
+        if (latestWalArchivedTime.isAfter(now)) {
+            latestWalArchivedTime = now;
+        }
+
+        if (latestWalArchivedTime.isBefore(earliestBackupTime)) {
+            return new PitrWindow(List.of(), "unavailable",
+                    "WAL archive does not yet cover the oldest retained backup.");
+        }
+
+        return new PitrWindow(
+                List.of(new PitrInterval(earliestBackupTime, latestWalArchivedTime)),
+                "continuous",
+                null
+        );
     }
 
     private Backup resolveBackupForTargetTime(List<Backup> completedBackups, Instant targetTime) {
@@ -818,27 +1016,15 @@ public class BackupService {
                 .comparing(Backup::getEarliestRecoveryTime, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparing(Backup::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()));
 
-        Optional<Backup> containing = completedBackups.stream()
-                .filter(this::hasValidRecoveryWindow)
-                .filter(b -> !targetTime.isBefore(b.getEarliestRecoveryTime()))
-                .filter(b -> !targetTime.isAfter(b.getLatestRecoveryTime()))
-                .max(byClosestPreceding);
-
-        if (containing.isPresent()) {
-            return containing.get();
-        }
-
         return completedBackups.stream()
-                .filter(this::hasValidRecoveryWindow)
+                .filter(this::hasValidBackupStartTime)
                 .filter(b -> !targetTime.isBefore(b.getEarliestRecoveryTime()))
                 .max(byClosestPreceding)
                 .orElse(null);
     }
 
-    private boolean hasValidRecoveryWindow(Backup backup) {
-        return backup.getEarliestRecoveryTime() != null
-                && backup.getLatestRecoveryTime() != null
-                && !backup.getEarliestRecoveryTime().isAfter(backup.getLatestRecoveryTime());
+    private boolean hasValidBackupStartTime(Backup backup) {
+        return backup.getEarliestRecoveryTime() != null;
     }
 
     /**
@@ -1093,17 +1279,10 @@ public class BackupService {
         Instant newestBackup = completedBackups.isEmpty() ? null :
                 completedBackups.get(0).getCreatedAt();
 
-        // Calculate PITR window (earliest to latest recovery time across all backups)
-        Instant earliestPitr = completedBackups.stream()
-                .map(Backup::getEarliestRecoveryTime)
-                .filter(Objects::nonNull)
-                .min(Instant::compareTo)
-                .orElse(null);
-        Instant latestPitr = completedBackups.stream()
-                .map(Backup::getLatestRecoveryTime)
-                .filter(Objects::nonNull)
-                .max(Instant::compareTo)
-                .orElse(null);
+        // Calculate PITR window from backup base + archived WAL (enterprise-style PITR)
+        PitrWindow pitrWindow = calculatePitrWindow(cluster, completedBackups);
+        Instant earliestPitr = pitrWindow.earliest();
+        Instant latestPitr = pitrWindow.latest();
 
         // Calculate storage trend (daily totals for last 30 days)
         List<Map<String, Object>> storageTrend = calculateStorageTrend(completedBackups, 30);

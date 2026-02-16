@@ -396,15 +396,8 @@ public class ClusterService {
                             .flag(LocationDto.getFlagForLocation(node.getLocation()));
 
             try {
-                // Query Patroni REST API on each node
-                SshService.CommandResult result = sshService.executeCommand(
-                        node.getPublicIp(),
-                        "curl -s http://localhost:8008/patroni",
-                        10000
-                );
-
-                if (result.isSuccess()) {
-                    String output = result.getStdout();
+                String output = patroniService.getPatroniStatus(node);
+                if (output != null) {
                     healthBuilder.reachable(true);
 
                     // Parse Patroni JSON response using shared PatroniService methods

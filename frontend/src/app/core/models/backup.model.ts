@@ -77,6 +77,30 @@ export interface PitrWindowResponse {
   available: boolean;
   earliestPitrTime: string | null;
   latestPitrTime: string | null;
+  intervals: PitrWindowInterval[];
+  status: PitrWindowStatus | string | null;
+  unavailableReason: string | null;
+  asOf: string | null;
+}
+
+export type PitrWindowStatus = 'continuous' | 'segmented' | 'unavailable';
+
+export interface PitrWindowInterval {
+  startTime: string;
+  endTime: string;
+}
+
+export interface PitrValidationErrorResponse {
+  timestamp?: string;
+  status?: number;
+  error?: string;
+  message: string;
+  code: string;
+  requestedTargetTime: string;
+  nearestBefore: string | null;
+  nearestAfter: string | null;
+  earliestPitrTime: string | null;
+  latestPitrTime: string | null;
 }
 
 export interface BackupDeletionInfo {

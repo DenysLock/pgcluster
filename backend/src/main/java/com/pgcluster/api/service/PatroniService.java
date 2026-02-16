@@ -7,6 +7,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -23,15 +28,87 @@ public class PatroniService {
 
     private final SshService sshService;
     private final VpsNodeRepository vpsNodeRepository;
+    private final HttpClient httpClient;
 
     @Value("${timeouts.patroni-api:10000}")
     private int patroniTimeoutMs;
 
-    private static final String PATRONI_API_COMMAND = "curl -s http://localhost:8008/patroni";
+    private static final int PATRONI_PORT = 8008;
+    private static final String PATRONI_PATH = "/patroni";
+    private static final String PATRONI_API_LOCAL_COMMAND = "curl -s http://localhost:8008/patroni";
 
     public PatroniService(SshService sshService, VpsNodeRepository vpsNodeRepository) {
         this.sshService = sshService;
         this.vpsNodeRepository = vpsNodeRepository;
+        this.httpClient = HttpClient.newHttpClient();
+    }
+
+    /**
+     * Query Patroni status JSON for a node.
+     *
+     * Strategy:
+     * 1) Prefer direct HTTP to the node's Patroni REST API (fast, avoids SSH flakiness for status reads)
+     * 2) Fallback to SSH + localhost curl if HTTP is not reachable (e.g. firewall, private networks)
+     *
+     * Returns null when Patroni status cannot be fetched.
+     */
+    public String getPatroniStatus(VpsNode node) {
+        if (node == null) {
+            return null;
+        }
+
+        String ip = getNodeIp(node);
+
+        // 1) Direct HTTP (works in our setup because Patroni uses host networking on port 8008).
+        String httpOutput = queryPatroniOverHttp(ip);
+        if (httpOutput != null && !httpOutput.isBlank()) {
+            return httpOutput;
+        }
+
+        // 2) SSH fallback (some deployments may restrict Patroni API to localhost only).
+        try {
+            SshService.CommandResult result = sshService.executeCommandWithRetry(
+                    ip,
+                    PATRONI_API_LOCAL_COMMAND,
+                    patroniTimeoutMs
+            );
+            if (result.isSuccess() && result.getStdout() != null && !result.getStdout().isBlank()) {
+                return result.getStdout();
+            }
+        } catch (Exception e) {
+            log.warn("Error querying Patroni via SSH on {}: {}", node.getName(), e.getMessage());
+        }
+
+        return null;
+    }
+
+    private String queryPatroniOverHttp(String ip) {
+        if (ip == null || ip.isBlank()) {
+            return null;
+        }
+
+        // Avoid accidental SSRF via hostnames; nodes should be IPs.
+        if (!ip.matches("^[0-9.]+$")) {
+            return null;
+        }
+
+        try {
+            URI uri = URI.create("http://" + ip + ":" + PATRONI_PORT + PATRONI_PATH);
+            HttpRequest request = HttpRequest.newBuilder(uri)
+                    .timeout(Duration.ofMillis(patroniTimeoutMs))
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return response.body();
+            }
+            log.debug("Patroni HTTP returned {} for {}:{}", response.statusCode(), ip, PATRONI_PORT);
+            return null;
+        } catch (Exception e) {
+            log.debug("Patroni HTTP query failed for {}:{} - {}", ip, PATRONI_PORT, e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -41,18 +118,9 @@ public class PatroniService {
      * @return true if the node is the leader
      */
     public boolean isLeaderNode(VpsNode node) {
-        try {
-            SshService.CommandResult result = sshService.executeCommand(
-                    node.getPublicIp(),
-                    PATRONI_API_COMMAND,
-                    patroniTimeoutMs
-            );
-
-            if (result.isSuccess()) {
-                return isLeaderRole(result.getStdout());
-            }
-        } catch (Exception e) {
-            log.warn("Error checking node {} for leader: {}", node.getName(), e.getMessage());
+        String output = getPatroniStatus(node);
+        if (output != null) {
+            return isLeaderRole(output);
         }
         return false;
     }
@@ -84,12 +152,8 @@ public class PatroniService {
         List<CompletableFuture<VpsNode>> futures = nodes.stream()
                 .map(node -> CompletableFuture.supplyAsync(() -> {
                     try {
-                        SshService.CommandResult result = sshService.executeCommand(
-                                node.getPublicIp(),
-                                PATRONI_API_COMMAND,
-                                patroniTimeoutMs
-                        );
-                        if (result.isSuccess() && isLeaderRole(result.getStdout())) {
+                        String output = getPatroniStatus(node);
+                        if (output != null && isLeaderRole(output)) {
                             log.debug("Found leader node: {} ({})", node.getName(), node.getPublicIp());
                             return node;
                         }

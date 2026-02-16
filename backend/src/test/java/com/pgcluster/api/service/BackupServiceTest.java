@@ -2,6 +2,7 @@ package com.pgcluster.api.service;
 
 import com.pgcluster.api.client.HetznerClient;
 import com.pgcluster.api.event.BackupCreatedEvent;
+import com.pgcluster.api.exception.PitrValidationException;
 import com.pgcluster.api.model.dto.PitrRestoreRequest;
 import com.pgcluster.api.model.entity.AuditLog;
 import com.pgcluster.api.model.entity.Backup;
@@ -47,6 +48,7 @@ class BackupServiceTest {
     @Mock private PgBackRestService pgBackRestService;
     @Mock private ProvisioningService provisioningService;
     @Mock private PatroniService patroniService;
+    @Mock private SshService sshService;
     @Mock private HetznerClient hetznerClient;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private AuditLogService auditLogService;
@@ -560,6 +562,35 @@ class BackupServiceTest {
             assertThat(window.isAvailable()).isTrue();
             assertThat(window.getEarliestPitrTime()).isEqualTo(older.getEarliestRecoveryTime());
             assertThat(window.getLatestPitrTime()).isEqualTo(newer.getLatestRecoveryTime());
+            assertThat(window.getStatus()).isEqualTo("continuous");
+            assertThat(window.getIntervals()).hasSize(1);
+            assertThat(window.getIntervals().get(0).getStartTime()).isEqualTo(older.getEarliestRecoveryTime());
+            assertThat(window.getIntervals().get(0).getEndTime()).isEqualTo(newer.getLatestRecoveryTime());
+        }
+
+        @Test
+        @DisplayName("should return segmented PITR window when gaps exist")
+        void shouldReturnSegmentedWindowWhenGapsExist() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+
+            Backup first = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            first.setEarliestRecoveryTime(Instant.parse("2026-01-01T10:00:00Z"));
+            first.setLatestRecoveryTime(Instant.parse("2026-01-01T10:15:00Z"));
+
+            Backup second = createCompletedBackup(cluster, Backup.BACKUP_TYPE_INCR);
+            second.setEarliestRecoveryTime(Instant.parse("2026-01-01T11:00:00Z"));
+            second.setLatestRecoveryTime(Instant.parse("2026-01-01T11:10:00Z"));
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(second, first));
+
+            var window = backupService.getPitrWindow(cluster.getId(), user);
+
+            assertThat(window.isAvailable()).isTrue();
+            assertThat(window.getStatus()).isEqualTo("segmented");
+            assertThat(window.getIntervals()).hasSize(2);
         }
 
         @Test
@@ -580,6 +611,9 @@ class BackupServiceTest {
             assertThat(window.isAvailable()).isFalse();
             assertThat(window.getEarliestPitrTime()).isNull();
             assertThat(window.getLatestPitrTime()).isNull();
+            assertThat(window.getStatus()).isEqualTo("unavailable");
+            assertThat(window.getIntervals()).isEmpty();
+            assertThat(window.getUnavailableReason()).isNotBlank();
         }
     }
 
@@ -670,8 +704,57 @@ class BackupServiceTest {
                     .thenReturn(List.of(backup));
 
             assertThatThrownBy(() -> backupService.restoreFromPitr(cluster.getId(), request, user))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("after the latest recovery time");
+                    .isInstanceOfSatisfying(PitrValidationException.class, ex -> {
+                        assertThat(ex.getCode()).isEqualTo(PitrValidationException.CODE_TARGET_AFTER_LATEST);
+                        assertThat(ex.getRequestedTargetTime()).isEqualTo(Instant.parse("2026-01-01T10:30:00Z"));
+                        assertThat(ex.getNearestBefore()).isEqualTo(Instant.parse("2026-01-01T10:00:00Z"));
+                        assertThat(ex.getNearestAfter()).isNull();
+                        assertThat(ex.getEarliestPitrTime()).isEqualTo(Instant.parse("2026-01-01T09:00:00Z"));
+                        assertThat(ex.getLatestPitrTime()).isEqualTo(Instant.parse("2026-01-01T10:00:00Z"));
+                    });
+
+            verify(restoreJobRepository, never()).save(any());
+            verify(clusterRepository, never()).save(any(Cluster.class));
+        }
+
+        @Test
+        @DisplayName("should throw when target time is in a PITR gap")
+        void shouldThrowWhenTargetTimeIsInGap() {
+            User user = createTestUser();
+            Cluster cluster = createRunningCluster();
+
+            Backup first = createCompletedBackup(cluster, Backup.BACKUP_TYPE_FULL);
+            first.setEarliestRecoveryTime(Instant.parse("2026-01-01T09:00:00Z"));
+            first.setLatestRecoveryTime(Instant.parse("2026-01-01T09:30:00Z"));
+
+            Backup second = createCompletedBackup(cluster, Backup.BACKUP_TYPE_INCR);
+            second.setEarliestRecoveryTime(Instant.parse("2026-01-01T10:00:00Z"));
+            second.setLatestRecoveryTime(Instant.parse("2026-01-01T10:20:00Z"));
+
+            PitrRestoreRequest request = PitrRestoreRequest.builder()
+                    .targetTime(Instant.parse("2026-01-01T09:45:00Z"))
+                    .createNewCluster(true)
+                    .newClusterName("restore-gap-window")
+                    .nodeRegions(List.of("fsn1"))
+                    .nodeSize("cx23")
+                    .build();
+
+            when(clusterRepository.findByIdAndUser(cluster.getId(), user)).thenReturn(Optional.of(cluster));
+            when(backupRepository.findByClusterAndStatusOrderByCreatedAtDesc(cluster, Backup.STATUS_COMPLETED))
+                    .thenReturn(List.of(second, first));
+
+            assertThatThrownBy(() -> backupService.restoreFromPitr(cluster.getId(), request, user))
+                    .isInstanceOfSatisfying(PitrValidationException.class, ex -> {
+                        assertThat(ex.getCode()).isEqualTo(PitrValidationException.CODE_TARGET_IN_GAP);
+                        assertThat(ex.getRequestedTargetTime()).isEqualTo(Instant.parse("2026-01-01T09:45:00Z"));
+                        assertThat(ex.getNearestBefore()).isEqualTo(Instant.parse("2026-01-01T09:30:00Z"));
+                        assertThat(ex.getNearestAfter()).isEqualTo(Instant.parse("2026-01-01T10:00:00Z"));
+                        assertThat(ex.getEarliestPitrTime()).isEqualTo(Instant.parse("2026-01-01T09:00:00Z"));
+                        assertThat(ex.getLatestPitrTime()).isEqualTo(Instant.parse("2026-01-01T10:20:00Z"));
+                    });
+
+            verify(restoreJobRepository, never()).save(any());
+            verify(clusterRepository, never()).save(any(Cluster.class));
         }
     }
 

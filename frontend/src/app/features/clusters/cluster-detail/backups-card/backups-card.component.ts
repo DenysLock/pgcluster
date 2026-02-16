@@ -1,5 +1,6 @@
 import { Component, Input, OnInit, OnDestroy, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { interval, Subscription } from 'rxjs';
@@ -15,13 +16,14 @@ import {
   BackupStep,
   ClusterNode,
   Location,
+  PitrValidationErrorResponse,
   PitrRestoreRequest,
   PitrWindowResponse,
   ServerType,
   ServerTypesResponse
 } from '../../../../core/models';
 import { POLLING_INTERVALS } from '../../../../core/constants';
-import { PitrPickerComponent } from './pitr-picker.component';
+import { PitrPickerComponent, PitrPickerInterval, PitrPickerSelection } from './pitr-picker.component';
 
 @Component({
   selector: 'app-backups-card',
@@ -559,25 +561,50 @@ import { PitrPickerComponent } from './pitr-picker.component';
                 <div class="flex items-center justify-center py-10">
                   <span class="spinner w-6 h-6"></span>
                 </div>
-              } @else if (!pitrWindow()?.available) {
+              } @else if (!pitrDialogWindow()?.available) {
                 <div class="bg-status-error/10 border border-status-error text-status-error px-4 py-3 text-sm">
                   PITR is currently unavailable for this cluster.
                 </div>
+                @if (pitrDialogWindow()?.unavailableReason) {
+                  <div class="text-xs text-muted-foreground mt-2">
+                    {{ pitrDialogWindow()!.unavailableReason }}
+                  </div>
+                }
                 <div class="flex justify-end gap-3 mt-6">
                   <button (click)="closePitrRestoreDialog()" class="btn-secondary" type="button">Close</button>
                 </div>
               } @else {
                 <app-pitr-picker
-                  [earliestTime]="pitrWindow()!.earliestPitrTime"
-                  [latestTime]="pitrWindow()!.latestPitrTime"
+                  [earliestTime]="pitrDialogWindow()!.earliestPitrTime"
+                  [latestTime]="pitrDialogWindow()!.latestPitrTime"
+                  [intervals]="pitrDialogWindow()!.intervals"
                   [initialTime]="selectedPitrTime()"
-                  (timeSelected)="onPitrTimeSelected($event)"
+                  (selectionChange)="onPitrSelectionChange($event)"
                 />
 
                 <div class="space-y-2 mt-4">
-                  <label class="label">Selected PITR time (UTC ISO)</label>
+                  <label class="label">Selected recovery point (UTC)</label>
+                  <div class="input font-mono text-xs flex items-center">{{ formatUtcDateTime(selectedPitrTime()) }}</div>
+                </div>
+
+                <div class="space-y-2 mt-3">
+                  <label class="label">Selected PITR time (UTC ISO used by API)</label>
                   <input class="input font-mono text-xs" type="text" [value]="selectedPitrTime()" readonly />
                 </div>
+
+                @if (pitrSelectionMessage()) {
+                  <div
+                    [class]="pitrSelectionWasClamped() ? 'text-xs text-status-warning mt-2' : 'text-xs text-muted-foreground mt-2'"
+                  >
+                    {{ pitrSelectionMessage() }}
+                  </div>
+                }
+
+                @if (!canContinuePitrStep()) {
+                  <div class="text-xs text-status-warning mt-2">
+                    {{ pitrStep1BlockingReason() }}
+                  </div>
+                }
 
                 <div class="flex justify-end gap-3 mt-6">
                   <button (click)="closePitrRestoreDialog()" class="btn-secondary" type="button">Cancel</button>
@@ -790,8 +817,12 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   showPitrDialog = signal(false);
   pitrStep = signal<1 | 2>(1);
   pitrWindow = signal<PitrWindowResponse | null>(null);
+  pitrDialogWindow = signal<PitrWindowResponse | null>(null);
   pitrWindowLoading = signal(false);
   selectedPitrTime = signal('');
+  pitrSelectionValid = signal(false);
+  pitrSelectionMessage = signal<string | null>(null);
+  pitrSelectionWasClamped = signal(false);
 
   locations = signal<Location[]>([]);
   locationsLoading = signal(false);
@@ -844,19 +875,31 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   ) {}
 
   pitrWindowLabel = computed(() => {
+    const window = this.pitrWindow();
+    if (window?.available && window.earliestPitrTime && window.latestPitrTime) {
+      const intervalCount = this.getPitrIntervals(window).length;
+      if (intervalCount > 1) {
+        return `${intervalCount} ranges`;
+      }
+      return this.formatPitrDuration(window.earliestPitrTime, window.latestPitrTime);
+    }
+
     const m = this.metrics();
     if (!m || !m.earliestPitrTime || !m.latestPitrTime) return 'N/A';
+    return this.formatPitrDuration(m.earliestPitrTime, m.latestPitrTime);
+  });
 
-    const earliest = new Date(m.earliestPitrTime);
-    const latest = new Date(m.latestPitrTime);
-    const diffMs = latest.getTime() - earliest.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffDays >= 1) return `${diffDays} days`;
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    if (diffHours >= 1) return `${diffHours} hours`;
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    return `${diffMins} mins`;
+  pitrStep1BlockingReason = computed(() => {
+    if (this.pitrWindowLoading()) return 'Loading PITR recovery window...';
+    const window = this.pitrDialogWindow();
+    if (!window?.available) {
+      return window?.unavailableReason || 'PITR is currently unavailable for this cluster.';
+    }
+    if (!this.selectedPitrTime()) return 'Select a PITR date and time to continue.';
+    if (!this.pitrSelectionValid()) {
+      return this.pitrSelectionMessage() || 'Selected PITR time is outside the available recovery window.';
+    }
+    return '';
   });
 
   ngOnInit(): void {
@@ -911,8 +954,15 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     this.backupService.getPitrWindow(this.clusterId).subscribe({
       next: (window) => {
         this.pitrWindow.set(window);
-        if (window.available && window.latestPitrTime) {
-          this.selectedPitrTime.set(window.latestPitrTime);
+        if (!this.showPitrDialog()) {
+          const defaultTime = this.getDefaultPitrTime(window);
+          if (window.available && defaultTime) {
+            this.selectedPitrTime.set(defaultTime);
+            this.pitrSelectionValid.set(this.isTimeWithinWindow(window, defaultTime));
+          } else {
+            this.selectedPitrTime.set('');
+            this.pitrSelectionValid.set(false);
+          }
         }
         this.pitrWindowLoading.set(false);
       },
@@ -921,8 +971,16 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
         this.pitrWindow.set({
           available: false,
           earliestPitrTime: null,
-          latestPitrTime: null
+          latestPitrTime: null,
+          intervals: [],
+          status: 'unavailable',
+          unavailableReason: 'Failed to load PITR state from API.',
+          asOf: null
         });
+        if (!this.showPitrDialog()) {
+          this.selectedPitrTime.set('');
+          this.pitrSelectionValid.set(false);
+        }
       }
     });
   }
@@ -1038,15 +1096,31 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   }
 
   openPitrRestoreDialog(): void {
-    if (!this.pitrWindow()?.available) return;
+    const window = this.pitrWindow();
+    if (!window?.available) return;
 
     this.initializeRestoreForm();
     this.pitrStep.set(1);
+    this.pitrDialogWindow.set({
+      available: window.available,
+      earliestPitrTime: window.earliestPitrTime,
+      latestPitrTime: window.latestPitrTime,
+      intervals: window.intervals || [],
+      status: window.status,
+      unavailableReason: window.unavailableReason,
+      asOf: window.asOf
+    });
 
-    const defaultTime = this.pitrWindow()?.latestPitrTime;
+    const defaultTime = this.getDefaultPitrTime(window);
     if (defaultTime) {
       this.selectedPitrTime.set(defaultTime);
+      this.pitrSelectionValid.set(this.isTimeWithinWindow(window, defaultTime));
+    } else {
+      this.selectedPitrTime.set('');
+      this.pitrSelectionValid.set(false);
     }
+    this.pitrSelectionMessage.set(null);
+    this.pitrSelectionWasClamped.set(false);
 
     this.showPitrDialog.set(true);
   }
@@ -1054,6 +1128,10 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   closePitrRestoreDialog(): void {
     this.showPitrDialog.set(false);
     this.pitrStep.set(1);
+    this.pitrDialogWindow.set(null);
+    this.pitrSelectionMessage.set(null);
+    this.pitrSelectionWasClamped.set(false);
+    this.pitrSelectionValid.set(false);
   }
 
   private initializeRestoreForm(): void {
@@ -1220,17 +1298,20 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
     this.restoreBackup();
   }
 
-  onPitrTimeSelected(timestamp: string): void {
-    this.selectedPitrTime.set(timestamp);
+  onPitrSelectionChange(selection: PitrPickerSelection): void {
+    this.selectedPitrTime.set(selection.isoUtc);
+    this.pitrSelectionValid.set(selection.isValid);
+    this.pitrSelectionMessage.set(selection.message);
+    this.pitrSelectionWasClamped.set(selection.wasClamped);
   }
 
   canContinuePitrStep(): boolean {
-    return this.isSelectedPitrTimeInWindow();
+    return this.pitrSelectionValid() && !!this.selectedPitrTime();
   }
 
   goToPitrStep2(): void {
-    if (!this.isSelectedPitrTimeInWindow()) {
-      this.notificationService.error('Selected PITR time is outside the available recovery window');
+    if (!this.canContinuePitrStep()) {
+      this.notificationService.error(this.pitrStep1BlockingReason() || 'Selected PITR time is outside the available recovery window');
       return;
     }
     this.pitrStep.set(2);
@@ -1243,36 +1324,14 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
   onPitrRestoreClick(): void {
     if (this.restoring()) return;
 
-    if (!this.isSelectedPitrTimeInWindow()) {
-      this.notificationService.error('Selected PITR time is outside the available recovery window');
+    if (!this.canContinuePitrStep()) {
+      this.notificationService.error(this.pitrStep1BlockingReason() || 'Selected PITR time is outside the available recovery window');
       return;
     }
 
     if (!this.validateRestoreConfig()) return;
 
     this.restoreFromPitr();
-  }
-
-  private isSelectedPitrTimeInWindow(): boolean {
-    const window = this.pitrWindow();
-    const selected = this.selectedPitrTime();
-
-    if (!window?.available || !selected) return false;
-
-    const targetMs = new Date(selected).getTime();
-    if (Number.isNaN(targetMs)) return false;
-
-    if (window.earliestPitrTime) {
-      const earliestMs = new Date(window.earliestPitrTime).getTime();
-      if (targetMs < earliestMs) return false;
-    }
-
-    if (window.latestPitrTime) {
-      const latestMs = new Date(window.latestPitrTime).getTime();
-      if (targetMs > latestMs) return false;
-    }
-
-    return true;
   }
 
   private validateRestoreConfig(): boolean {
@@ -1359,6 +1418,10 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
         this.restoring.set(false);
         this.showPitrDialog.set(false);
         this.pitrStep.set(1);
+        this.pitrDialogWindow.set(null);
+        this.pitrSelectionMessage.set(null);
+        this.pitrSelectionWasClamped.set(false);
+        this.pitrSelectionValid.set(false);
         this.notificationService.success('PITR restore job started. Navigating to new cluster...');
 
         if (restoreJob.targetClusterId) {
@@ -1368,9 +1431,139 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
       },
       error: (err) => {
         this.restoring.set(false);
+        const pitrValidationError = this.extractPitrValidationError(err);
+        if (pitrValidationError) {
+          this.handlePitrValidationError(pitrValidationError);
+          return;
+        }
+
         this.notificationService.error(err.error?.message || 'Failed to start PITR restore');
       }
     });
+  }
+
+  private formatPitrDuration(earliestIso: string, latestIso: string): string {
+    const earliestMs = this.parseUtcMillis(earliestIso);
+    const latestMs = this.parseUtcMillis(latestIso);
+    const diffMs = latestMs - earliestMs;
+    if (Number.isNaN(diffMs) || diffMs < 0) return 'N/A';
+
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays >= 1) return `${diffDays} days`;
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    if (diffHours >= 1) return `${diffHours} hours`;
+    const diffMins = Math.floor(diffMs / (1000 * 60));
+    return `${diffMins} mins`;
+  }
+
+  private getPitrIntervals(window: PitrWindowResponse | null): PitrPickerInterval[] {
+    if (!window) return [];
+
+    const parsed = (window.intervals || [])
+      .map(interval => {
+        const start = this.parseUtcMillis(interval.startTime);
+        const end = this.parseUtcMillis(interval.endTime);
+        if (Number.isNaN(start) || Number.isNaN(end) || start > end) {
+          return null;
+        }
+        return {
+          startTime: new Date(start).toISOString(),
+          endTime: new Date(end).toISOString()
+        };
+      })
+      .filter((interval): interval is PitrPickerInterval => interval !== null)
+      .sort((a, b) => this.parseUtcMillis(a.startTime) - this.parseUtcMillis(b.startTime));
+
+    if (parsed.length > 0) {
+      return parsed;
+    }
+
+    if (window.earliestPitrTime && window.latestPitrTime) {
+      const earliest = this.parseUtcMillis(window.earliestPitrTime);
+      const latest = this.parseUtcMillis(window.latestPitrTime);
+      if (!Number.isNaN(earliest) && !Number.isNaN(latest) && earliest <= latest) {
+        return [{
+          startTime: new Date(earliest).toISOString(),
+          endTime: new Date(latest).toISOString()
+        }];
+      }
+    }
+
+    return [];
+  }
+
+  private getDefaultPitrTime(window: PitrWindowResponse | null): string {
+    const intervals = this.getPitrIntervals(window);
+    if (intervals.length > 0) {
+      return intervals[intervals.length - 1].endTime;
+    }
+
+    return window?.latestPitrTime || '';
+  }
+
+  private isTimeWithinWindow(window: PitrWindowResponse | null, selectedIso: string): boolean {
+    if (!window?.available || !selectedIso) return false;
+
+    const targetMs = this.parseUtcMillis(selectedIso);
+    if (Number.isNaN(targetMs)) return false;
+
+    if (window.earliestPitrTime) {
+      const earliestMs = this.parseUtcMillis(window.earliestPitrTime);
+      if (targetMs < earliestMs) return false;
+    }
+
+    if (window.latestPitrTime) {
+      const latestMs = this.parseUtcMillis(window.latestPitrTime);
+      if (targetMs > latestMs) return false;
+    }
+
+    return true;
+  }
+
+  private extractPitrValidationError(err: unknown): PitrValidationErrorResponse | null {
+    if (!(err instanceof HttpErrorResponse)) {
+      return null;
+    }
+
+    if (err.status !== 422 || !err.error || typeof err.error !== 'object') {
+      return null;
+    }
+
+    const payload = err.error as Partial<PitrValidationErrorResponse>;
+    if (
+      typeof payload.message !== 'string' ||
+      typeof payload.code !== 'string' ||
+      typeof payload.requestedTargetTime !== 'string'
+    ) {
+      return null;
+    }
+
+    return payload as PitrValidationErrorResponse;
+  }
+
+  private handlePitrValidationError(err: PitrValidationErrorResponse): void {
+    this.pitrStep.set(1);
+
+    const suggested = err.nearestAfter || err.nearestBefore || '';
+    if (suggested) {
+      this.selectedPitrTime.set(suggested);
+    }
+
+    const activeWindow = this.pitrDialogWindow() || this.pitrWindow();
+    this.pitrSelectionValid.set(this.isTimeWithinWindow(activeWindow, this.selectedPitrTime()));
+
+    const suggestionMessage = suggested
+      ? `Suggested recoverable time: ${this.formatUtcDateTime(suggested)}.`
+      : 'Please select another recovery point and try again.';
+
+    const combinedMessage = `${err.message} ${suggestionMessage}`;
+    setTimeout(() => {
+      if (!this.showPitrDialog()) return;
+      this.pitrSelectionMessage.set(combinedMessage);
+      this.pitrSelectionWasClamped.set(true);
+    }, 0);
+
+    this.notificationService.error(err.message);
   }
 
   getRestoredClusterName(): string {
@@ -1457,9 +1650,47 @@ export class BackupsCardComponent implements OnInit, OnDestroy {
 
   formatUtcIso(dateString: string | null | undefined): string {
     if (!dateString) return '';
-    const date = new Date(dateString);
+    const date = new Date(this.normalizeUtcInput(dateString));
     if (Number.isNaN(date.getTime())) return '';
     return date.toISOString();
+  }
+
+  formatUtcDateTime(dateString: string | null | undefined): string {
+    if (!dateString) return '';
+    const date = new Date(this.normalizeUtcInput(dateString));
+    if (Number.isNaN(date.getTime())) return '';
+
+    const year = date.getUTCFullYear();
+    const month = this.pad2(date.getUTCMonth() + 1);
+    const day = this.pad2(date.getUTCDate());
+    const hour = this.pad2(date.getUTCHours());
+    const minute = this.pad2(date.getUTCMinutes());
+    const second = this.pad2(date.getUTCSeconds());
+    return `${year}-${month}-${day} ${hour}:${minute}:${second} UTC`;
+  }
+
+  private pad2(value: number): string {
+    return value.toString().padStart(2, '0');
+  }
+
+  private parseUtcMillis(value: string): number {
+    return new Date(this.normalizeUtcInput(value)).getTime();
+  }
+
+  private normalizeUtcInput(value: string): string {
+    if (/\dZ$|[+-]\d{2}:\d{2}$/.test(value)) {
+      return value;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/.test(value)) {
+      return value.replace(' ', 'T') + 'Z';
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(value)) {
+      return value + 'Z';
+    }
+
+    return value;
   }
 
   getExpiryText(expiresAt: string): string {

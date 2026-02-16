@@ -78,6 +78,25 @@ public class GlobalExceptionHandler {
         return buildErrorResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
     }
 
+    @ExceptionHandler(PitrValidationException.class)
+    public ResponseEntity<Map<String, Object>> handlePitrValidationException(PitrValidationException ex) {
+        log.warn("PITR validation failed: {}", ex.getMessage());
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("timestamp", Instant.now().toString());
+        body.put("status", HttpStatus.UNPROCESSABLE_ENTITY.value());
+        body.put("error", HttpStatus.UNPROCESSABLE_ENTITY.getReasonPhrase());
+        body.put("message", ex.getMessage());
+        body.put("code", ex.getCode());
+        body.put("requestedTargetTime", ex.getRequestedTargetTime() != null ? ex.getRequestedTargetTime().toString() : null);
+        body.put("nearestBefore", ex.getNearestBefore() != null ? ex.getNearestBefore().toString() : null);
+        body.put("nearestAfter", ex.getNearestAfter() != null ? ex.getNearestAfter().toString() : null);
+        body.put("earliestPitrTime", ex.getEarliestPitrTime() != null ? ex.getEarliestPitrTime().toString() : null);
+        body.put("latestPitrTime", ex.getLatestPitrTime() != null ? ex.getLatestPitrTime().toString() : null);
+
+        return new ResponseEntity<>(body, HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<Map<String, Object>> handleIllegalStateException(IllegalStateException ex) {
         log.warn("Invalid state: {}", ex.getMessage());

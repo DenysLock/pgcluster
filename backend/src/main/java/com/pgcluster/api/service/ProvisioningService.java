@@ -347,6 +347,9 @@ public class ProvisioningService {
         // Update cluster status
         cluster.setHostname(cluster.getSlug() + "." + baseDomain);
         cluster.setStatus(Cluster.STATUS_RUNNING);
+        // Don't overwrite committed progress updates with stale in-memory values.
+        cluster.setProvisioningStep(Cluster.STEP_CREATING_DNS);
+        cluster.setProvisioningProgress(Cluster.TOTAL_PROVISIONING_STEPS);
         clusterRepository.save(cluster);
 
         log.info("Cluster {} provisioned successfully in {} nodes", cluster.getSlug(), nodes.size());
@@ -1495,6 +1498,9 @@ public class ProvisioningService {
         // Update cluster status
         targetCluster.setHostname(targetCluster.getSlug() + "." + baseDomain);
         targetCluster.setStatus(Cluster.STATUS_RUNNING);
+        // Don't overwrite committed progress updates with stale in-memory values.
+        targetCluster.setProvisioningStep(Cluster.STEP_CREATING_DNS);
+        targetCluster.setProvisioningProgress(Cluster.TOTAL_PROVISIONING_STEPS);
         clusterRepository.save(targetCluster);
 
         log.info("Restored cluster {} provisioned successfully in {} nodes", targetCluster.getSlug(), nodes.size());
@@ -1547,6 +1553,13 @@ public class ProvisioningService {
         sshService.uploadContent(node.getPublicIp(), patroniYml, "/opt/pgcluster/patroni.yml");
         sshService.executeCommand(node.getPublicIp(), "chmod 644 /opt/pgcluster/patroni.yml");
 
+        // Upload restore bootstrap script (used by Patroni custom bootstrap method).
+        // /var/spool/pgbackrest is mounted into the Patroni container, so the script will be accessible inside.
+        String restoreBootstrapScript = generateRestoreBootstrapScript(sourceCluster.getSlug(), backupLabel, targetTime);
+        sshService.executeCommand(node.getPublicIp(), "mkdir -p /var/spool/pgbackrest");
+        sshService.uploadContent(node.getPublicIp(), restoreBootstrapScript, "/var/spool/pgbackrest/restore-bootstrap.sh");
+        sshService.executeCommand(node.getPublicIp(), "chmod 755 /var/spool/pgbackrest/restore-bootstrap.sh");
+
         // Ensure data directories exist
         sshService.executeCommand(node.getPublicIp(),
                 "mkdir -p /data/postgresql /data/etcd && chmod 700 /data/postgresql && chown -R 999:999 /data/postgresql");
@@ -1582,23 +1595,6 @@ public class ProvisioningService {
         // Calculate PostgreSQL memory settings based on node size
         MemorySettings mem = getMemorySettings(nodeSize);
 
-        // Build pgBackRest restore command
-        StringBuilder restoreCmd = new StringBuilder();
-        restoreCmd.append("pgbackrest --stanza=").append(sourceClusterSlug);
-        if (backupLabel != null && !backupLabel.isEmpty()) {
-            restoreCmd.append(" --set=").append(backupLabel);
-        }
-        restoreCmd.append(" --delta restore");
-
-        // Build recovery target settings for PITR
-        // Note: Second line needs explicit indentation because %s only indents the first line
-        String recoveryTarget = "";
-        if (targetTime != null) {
-            String targetTimeStr = targetTime.toString().replace("T", " ").replace("Z", "");
-            recoveryTarget = "recovery_target_time: '%s'\n                  recovery_target_action: promote"
-                    .formatted(targetTimeStr);
-        }
-
         return """
             scope: %s
             namespace: /pgcluster/
@@ -1630,17 +1626,22 @@ public class ProvisioningService {
                     hot_standby: 'on'
                     max_wal_senders: 10
                     max_replication_slots: 10
-                    archive_mode: 'on'
-                    archive_command: 'pgbackrest --stanza=%s archive-push %%p'
+                    # Disable archiving during restore. We enable it later after pgBackRest is reconfigured
+                    # to the new cluster repo and a new stanza is created.
+                    archive_mode: 'off'
+                    archive_command: '/bin/true'
 
               method: pgbackrest
               pgbackrest:
-                command: '%s'
-                keep_existing_recovery_conf: false
+                # Restore command is provided as a script so we can:
+                # - avoid brittle YAML quoting for complex pgBackRest/PITR args
+                # - run small cleanup steps after restore (e.g. remove patroni.dynamic.json restored from source)
+                # The file is mounted into the Patroni container via /var/spool/pgbackrest volume.
+                command: '/var/spool/pgbackrest/restore-bootstrap.sh'
+                # Keep the recovery config written by pgBackRest (restore_command, recovery_target_*, signal files).
+                # If Patroni removes it, PostgreSQL can't replay WAL and PITR restores will hang/fail.
+                keep_existing_recovery_conf: true
                 no_params: true
-                recovery_conf:
-                  restore_command: 'pgbackrest --stanza=%s archive-get %%f %%p'
-                  %s
 
               pg_hba:
                 - host replication replicator 0.0.0.0/0 md5
@@ -1687,10 +1688,6 @@ public class ProvisioningService {
                 etcdHosts,
                 mem.sharedBuffers(),
                 mem.effectiveCache(),
-                clusterSlug,           // archive_command uses NEW cluster stanza
-                restoreCmd.toString(), // pgbackrest restore command
-                sourceClusterSlug,     // restore_command uses SOURCE cluster stanza
-                recoveryTarget,
                 postgresPassword,
                 replicatorPassword,
                 nodeIp,
@@ -1699,6 +1696,104 @@ public class ProvisioningService {
                 replicatorPassword,
                 postgresPassword
         );
+    }
+
+    /**
+     * Generate a small script that pgBackRest restores the selected backup and configures recovery for PITR.
+     *
+     * Why a script (instead of inline command in patroni.yml)?
+     * - avoids brittle YAML quoting for complex commands
+     * - allows cleanup steps after restore (e.g. removing patroni.dynamic.json restored from source)
+     */
+    private String generateRestoreBootstrapScript(String sourceClusterSlug, String backupLabel, Instant targetTime) {
+        if (sourceClusterSlug == null || !sourceClusterSlug.matches("^[a-z0-9-]+$")) {
+            throw new IllegalArgumentException("Invalid source cluster slug: " + sourceClusterSlug);
+        }
+        // pgBackRest labels commonly include underscores for diff/incr backups, e.g.:
+        // 20260214-153216F_20260214-171457I
+        if (backupLabel != null && !backupLabel.isBlank() && !backupLabel.matches("^[A-Za-z0-9_-]+$")) {
+            throw new IllegalArgumentException("Invalid pgBackRest backup label: " + backupLabel);
+        }
+
+        // PostgreSQL expects a timestamp literal (no ISO-8601 'T') for recovery_target_time.
+        String pgTargetTime = null;
+        if (targetTime != null) {
+            pgTargetTime = java.time.format.DateTimeFormatter
+                    // Use numeric UTC offset (+00:00) instead of "Z" to avoid config parsing issues.
+                    .ofPattern("yyyy-MM-dd HH:mm:ssxxx")
+                    .withZone(java.time.ZoneOffset.UTC)
+                    .format(targetTime.truncatedTo(java.time.temporal.ChronoUnit.SECONDS));
+        }
+
+        StringBuilder cmd = new StringBuilder();
+        cmd.append("pgbackrest");
+        cmd.append(" --stanza=").append(sourceClusterSlug);
+
+        if (backupLabel != null && !backupLabel.isBlank()) {
+            cmd.append(" --set=").append(backupLabel);
+        }
+
+        // Disable archiving on the restored cluster during restore so we don't push WAL into the SOURCE stanza/repo.
+        cmd.append(" --archive-mode=off");
+
+        // Recovery target:
+        // - PITR restores: recover to the selected timestamp and promote
+        // - Non-PITR restores: recover to the earliest consistent point and promote
+        //
+        // IMPORTANT: Do NOT pass restore_command/recovery_* via --recovery-option.
+        // pgBackRest already generates valid postgresql.auto.conf + signal files. When we injected our own
+        // quoted values, PostgreSQL hit:
+        //   syntax error in postgresql.auto.conf near token "pgbackrest"
+        // because pgBackRest will quote values itself.
+        if (pgTargetTime != null) {
+            cmd.append(" --type=time");
+            cmd.append(" --target='").append(pgTargetTime).append("'");
+            cmd.append(" --target-action=promote");
+            // Use 'current' to avoid restoring on a newer timeline that may not contain the selected backup LSN.
+            // (We observed pgBackRest error [058] when 'latest' timeline forked before the base backup.)
+            cmd.append(" --target-timeline=current");
+        } else {
+            cmd.append(" --type=immediate");
+            cmd.append(" --target-action=promote");
+        }
+
+        cmd.append(" restore");
+
+        // NOTE: /var/lib/postgresql/data is PGDATA inside the patroni container (host path /data/postgresql).
+        // patroni.dynamic.json restored from the SOURCE cluster can override our intended settings on bootstrap.
+        // Remove it so the new cluster doesn't inherit source cluster archiving config, etc.
+        //
+        // pgBackRest restore with --archive-mode=off may write archive_* entries into postgresql.auto.conf.
+        // If left there, they override Patroni runtime config and backups later fail with:
+        //   ERROR: [087]: archive_mode must be enabled
+        // Remove only archive_* overrides while preserving restore_command/recovery_target_*.
+        return ""
+                + "#!/bin/sh\n"
+                + "set -eu\n"
+                + "\n"
+                + "PGDATA=\"/var/lib/postgresql/data\"\n"
+                + "\n"
+                + "echo \"[restore-bootstrap] Starting pgBackRest restore...\"\n"
+                + cmd + "\n"
+                + "echo \"[restore-bootstrap] pgBackRest restore finished\"\n"
+                + "\n"
+                + "echo \"[restore-bootstrap] postgresql.auto.conf (after restore)\"\n"
+                + "nl -ba \"$PGDATA/postgresql.auto.conf\" || true\n"
+                + "\n"
+                + "echo \"[restore-bootstrap] Removing restore-time archive_* overrides from postgresql.auto.conf\"\n"
+                + "if [ -f \"$PGDATA/postgresql.auto.conf\" ]; then\n"
+                + "  sed -i -E '/^[[:space:]]*archive_mode[[:space:]]*=/d; "
+                + "/^[[:space:]]*archive_command[[:space:]]*=/d; "
+                + "/^[[:space:]]*archive_timeout[[:space:]]*=/d' \"$PGDATA/postgresql.auto.conf\" || true\n"
+                + "fi\n"
+                + "\n"
+                + "echo \"[restore-bootstrap] postgresql.auto.conf (after archive cleanup)\"\n"
+                + "nl -ba \"$PGDATA/postgresql.auto.conf\" || true\n"
+                + "\n"
+                + "echo \"[restore-bootstrap] Removing restored dynamic Patroni config (patroni.dynamic.json)\"\n"
+                + "rm -f \"$PGDATA/patroni.dynamic.json\" || true\n"
+                + "\n"
+                + "exit 0\n";
     }
 
     /**
@@ -1723,17 +1818,19 @@ public class ProvisioningService {
 
                 if (result.isSuccess()) {
                     String output = result.getStdout();
-                    // Check if PostgreSQL is running and ready
-                    if ((output.contains("\"role\": \"master\"") || output.contains("\"role\":\"master\"") ||
-                         output.contains("\"role\": \"primary\"") || output.contains("\"role\":\"primary\"")) &&
-                        output.contains("\"state\": \"running\"")) {
+                    // Patroni may report leader role as "leader", "primary", or "master" depending on version.
+                    // Use PatroniService role parsing to avoid false timeouts during successful restores.
+                    if (patroniService.isLeaderRole(output) && output.contains("\"state\": \"running\"")) {
                         log.info("Patroni restore completed after {} attempts (~{}s)", attempt, attempt * 5);
                         return;
                     }
 
                     // Log progress
                     if (attempt % 12 == 0) { // Every minute
-                        log.info("Restore still in progress... ({}s elapsed)", attempt * 5);
+                        log.info("Restore still in progress... ({}s elapsed, role={}, stateRunning={})",
+                                attempt * 5,
+                                patroniService.parseRole(output),
+                                output.contains("\"state\": \"running\""));
                     }
                 }
             } catch (InterruptedException e) {

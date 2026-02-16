@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.MessageDigest;
@@ -143,7 +144,9 @@ public class HostKeyVerifier implements HostKeyRepository {
      * Remove trust for a host. Call this when a server is being deleted
      * or when an IP might be recycled.
      */
-    @Transactional
+    // Must commit immediately to avoid deadlocks with SSH handshakes that
+    // persist/verify host keys in a separate transaction (e.g. during provisioning).
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void removeHost(String host) {
         try {
             sshHostKeyRepository.deleteByHost(host);
@@ -157,7 +160,8 @@ public class HostKeyVerifier implements HostKeyRepository {
     /**
      * Save a host key to the database and cache.
      */
-    @Transactional
+    // Host key persistence should not break read-only API transactions that happen to open SSH connections.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void saveHostKey(String host, String fingerprint, String keyType) {
         try {
             SshHostKey hostKey = sshHostKeyRepository.findByHost(host)
@@ -187,7 +191,8 @@ public class HostKeyVerifier implements HostKeyRepository {
     /**
      * Remove a host key from the database and cache.
      */
-    @Transactional
+    // Commit immediately to avoid holding row locks across long-running operations.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void removeHostKey(String host) {
         try {
             sshHostKeyRepository.deleteByHost(host);
@@ -200,7 +205,8 @@ public class HostKeyVerifier implements HostKeyRepository {
     /**
      * Update the last verified timestamp for a host.
      */
-    @Transactional
+    // Run in its own transaction so a read-only outer transaction doesn't get marked rollback-only.
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void updateLastVerified(String host) {
         try {
             sshHostKeyRepository.updateLastVerifiedAt(host, Instant.now());
